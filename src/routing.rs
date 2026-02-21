@@ -137,7 +137,6 @@ fn register_ndm_interface() {
     ndmc(&format!("interface {} ip global auto", NDM_IF_NAME));
     ndmc(&format!("interface {} security-level public", NDM_IF_NAME));
     ndmc(&format!("interface {} up", NDM_IF_NAME));
-    ndmc(&format!("ip route default auto interface {}", NDM_IF_NAME));
 }
 
 fn unregister_ndm_interface() {
@@ -145,7 +144,6 @@ fn unregister_ndm_interface() {
     log::info!("{}", msg);
     crate::logs::global_buffer().push(msg);
 
-    ndmc(&format!("no ip route default auto interface {}", NDM_IF_NAME));
     ndmc(&format!("interface {} down", NDM_IF_NAME));
     ndmc(&format!("no interface {}", NDM_IF_NAME));
 }
