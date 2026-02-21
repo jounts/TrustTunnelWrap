@@ -107,7 +107,7 @@ jobs:
         env:
           CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
           CC_mipsel_unknown_linux_musl: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
-          CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C link-arg=--sysroot=/opt/mipsel-cross/mipsel-unknown-linux-musl
+          CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C link-arg=--sysroot=/opt/mipsel-cross/mipsel-unknown-linux-musl/sysroot
         run: |
           if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
             cross build --release --target ${{ steps.target.outputs.triple }}
