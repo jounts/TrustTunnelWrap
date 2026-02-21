@@ -106,8 +106,11 @@ jobs:
 
       - name: Package IPK
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          [ "$VERSION" = "$GITHUB_REF" ] && VERSION="1.0.0-${{ github.run_number }}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="0.0.0-dev.${{ github.run_number }}"
+          fi
 
           ./scripts/package-ipk.sh \
             "${{ matrix.arch }}" \

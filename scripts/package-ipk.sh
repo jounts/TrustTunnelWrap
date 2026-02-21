@@ -15,10 +15,19 @@ rm -f "$_test_tar"
 
 ARCH="${1:?Usage: $0 <arch> <version> <wrapper_bin> <client_dir>}"
 VERSION="${2:?}"
+VERSION="${VERSION#v}"
 WRAPPER_BIN="${3:?}"
 CLIENT_DIR="${4:?}"
 
-PKG_NAME="trusttunnel-keenetic_${VERSION}_${ARCH}.ipk"
+case "$ARCH" in
+    aarch64) OPKG_ARCH="aarch64-3.10" ;;
+    mipsel)  OPKG_ARCH="mipsel-3.4" ;;
+    armv7)   OPKG_ARCH="armv7-3.2" ;;
+    x86_64)  OPKG_ARCH="x86_64-3.2" ;;
+    *)       echo "Unknown arch: $ARCH"; exit 1 ;;
+esac
+
+PKG_NAME="trusttunnel-keenetic_${VERSION}_${OPKG_ARCH}.ipk"
 PKG_ROOT="ipk_root"
 
 echo "Building IPK: ${PKG_NAME}"
@@ -53,7 +62,7 @@ INSTALLED_SIZE=$(du -sk "$PKG_ROOT/opt" | cut -f1)
 cat > "$PKG_ROOT/CONTROL/control" << EOF
 Package: trusttunnel-keenetic
 Version: ${VERSION}
-Architecture: ${ARCH}
+Architecture: ${OPKG_ARCH}
 Maintainer: TrustTunnel Community
 Section: net
 Priority: optional
