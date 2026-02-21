@@ -81,6 +81,9 @@ jobs:
           sudo tar xJf /tmp/mipsel-musl.tar.xz -C /opt/mipsel-cross --strip-components=1
           rm -f /tmp/mipsel-musl.tar.xz
           echo "/opt/mipsel-cross/bin" >> "$GITHUB_PATH"
+          echo "--- sysroot diagnostics ---"
+          /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc -print-sysroot || true
+          find /opt/mipsel-cross -name 'crt1.o' 2>/dev/null | head -5
           /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc --version
 
       - name: Download pre-built TrustTunnelClient
@@ -104,6 +107,7 @@ jobs:
         env:
           CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
           CC_mipsel_unknown_linux_musl: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
+          CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C link-arg=--sysroot=/opt/mipsel-cross/mipsel-unknown-linux-musl
         run: |
           if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
             cross build --release --target ${{ steps.target.outputs.triple }}
