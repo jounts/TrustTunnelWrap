@@ -48,22 +48,34 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
       - name: Set target triple
         id: target
         run: |
           case "${{ matrix.arch }}" in
             aarch64) echo "triple=aarch64-unknown-linux-musl" >> $GITHUB_OUTPUT
-                     echo "client_arch=linux-aarch64" >> $GITHUB_OUTPUT ;;
+                     echo "client_arch=linux-aarch64" >> $GITHUB_OUTPUT
+                     echo "use_cross=true" >> $GITHUB_OUTPUT ;;
             mipsel)  echo "triple=mipsel-unknown-linux-musl" >> $GITHUB_OUTPUT
-                     echo "client_arch=linux-mipsel" >> $GITHUB_OUTPUT ;;
+                     echo "client_arch=linux-mipsel" >> $GITHUB_OUTPUT
+                     echo "use_cross=false" >> $GITHUB_OUTPUT ;;
             armv7)   echo "triple=armv7-unknown-linux-musleabihf" >> $GITHUB_OUTPUT
-                     echo "client_arch=linux-armv7" >> $GITHUB_OUTPUT ;;
+                     echo "client_arch=linux-armv7" >> $GITHUB_OUTPUT
+                     echo "use_cross=true" >> $GITHUB_OUTPUT ;;
             x86_64)  echo "triple=x86_64-unknown-linux-musl" >> $GITHUB_OUTPUT
-                     echo "client_arch=linux-x86_64" >> $GITHUB_OUTPUT ;;
+                     echo "client_arch=linux-x86_64" >> $GITHUB_OUTPUT
+                     echo "use_cross=true" >> $GITHUB_OUTPUT ;;
           esac
+
+      - name: Install cross
+        if: steps.target.outputs.use_cross == 'true'
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Install mipsel musl toolchain
+        if: steps.target.outputs.use_cross == 'false'
+        run: |
+          rustup target add mipsel-unknown-linux-musl
+          wget -qO- https://musl.cc/mipsel-linux-musl-cross.tgz | sudo tar xzf - -C /usr/local/ --strip-components=1
+          mipsel-linux-musl-gcc --version
 
       - name: Download pre-built TrustTunnelClient
         run: |
@@ -84,7 +96,11 @@ jobs:
 
       - name: Build wrapper
         run: |
-          cross build --release --target ${{ steps.target.outputs.triple }}
+          if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ steps.target.outputs.triple }}
+          else
+            cargo build --release --target ${{ steps.target.outputs.triple }}
+          fi
           ls -lh target/${{ steps.target.outputs.triple }}/release/trusttunnel-keenetic
 
       - name: Package IPK

@@ -3,7 +3,6 @@ linker = "aarch64-linux-musl-gcc"
 rustflags = ["-C", "link-arg=-Wl,--gc-sections", "-C", "target-feature=+crt-static"]
 
 [target.mipsel-unknown-linux-musl]
-image = "rustreleaser/cross:mipsel-unknown-linux-musl"
 linker = "mipsel-linux-musl-gcc"
 rustflags = ["-C", "link-arg=-Wl,--gc-sections", "-C", "target-feature=+crt-static"]
 
