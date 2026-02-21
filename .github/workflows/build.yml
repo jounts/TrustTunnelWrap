@@ -70,31 +70,6 @@ jobs:
         if: steps.target.outputs.use_cross == 'true'
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      - name: Install mipsel musl toolchain
-        if: steps.target.outputs.use_cross == 'false'
-        run: |
-          rustup toolchain install nightly --profile minimal
-          rustup +nightly component add rust-src
-          MUSL_CROSS_URL="https://github.com/cross-tools/musl-cross/releases/download/20250929/mipsel-unknown-linux-musl.tar.xz"
-          wget --tries=3 --timeout=60 -O /tmp/mipsel-musl.tar.xz "$MUSL_CROSS_URL"
-          sudo mkdir -p /opt/mipsel-cross
-          sudo tar xJf /tmp/mipsel-musl.tar.xz -C /opt/mipsel-cross --strip-components=1
-          rm -f /tmp/mipsel-musl.tar.xz
-          echo "/opt/mipsel-cross/bin" >> "$GITHUB_PATH"
-          # ld can't resolve the crosstool-ng sysroot after relocation;
-          # symlink CRT objects and libs to where ld actually searches.
-          SYSROOT=/opt/mipsel-cross/mipsel-unknown-linux-musl/sysroot
-          TARGET_LIB=/opt/mipsel-cross/mipsel-unknown-linux-musl/lib
-          GCC_LIB=/opt/mipsel-cross/lib/gcc/mipsel-unknown-linux-musl/$(ls /opt/mipsel-cross/lib/gcc/mipsel-unknown-linux-musl/)
-          sudo mkdir -p "$TARGET_LIB"
-          sudo ln -sf "$SYSROOT"/usr/lib/* "$TARGET_LIB/" 2>/dev/null || true
-          sudo ln -sf "$GCC_LIB"/crt*.o "$TARGET_LIB/" 2>/dev/null || true
-          # empty libunwind.a stub — musl + panic=abort doesn't need it
-          sudo /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-ar rcs "$TARGET_LIB/libunwind.a"
-          echo "--- verify CRT ---"
-          ls "$TARGET_LIB"/crt*.o "$TARGET_LIB"/libunwind.a
-          /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc --version
-
       - name: Download pre-built TrustTunnelClient
         run: |
           ./scripts/download-client.sh \
@@ -114,15 +89,19 @@ jobs:
 
       - name: Build wrapper
         env:
-          CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
-          CC_mipsel_unknown_linux_musl: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
           TRUSTTUNNEL_VERSION: ${{ github.ref_name || format('0.0.0-dev.{0}', github.run_number) }}
         run: |
           if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
             cross build --release --target ${{ steps.target.outputs.triple }}
           else
-            export RUSTFLAGS="-C link-arg=-Wl,--gc-sections -C target-feature=+crt-static -C link-arg=-L/opt/mipsel-cross/mipsel-unknown-linux-musl/lib"
-            cargo +nightly build --release --target ${{ steps.target.outputs.triple }} -Zbuild-std=std,panic_abort
+            # mipsel-unknown-linux-musl is Tier 3 — use rust-musl-cross Docker image
+            docker run --rm \
+              -v "$(pwd)":/home/rust/src \
+              -v "${HOME}/.cargo/registry":/root/.cargo/registry \
+              -v "${HOME}/.cargo/git":/root/.cargo/git \
+              -e TRUSTTUNNEL_VERSION="${TRUSTTUNNEL_VERSION}" \
+              ghcr.io/rust-cross/rust-musl-cross:mipsel-musl \
+              bash -c "rustup default nightly && cargo build --release --target mipsel-unknown-linux-musl -Zbuild-std=std,panic_abort"
           fi
           ls -lh target/${{ steps.target.outputs.triple }}/release/trusttunnel-keenetic
 
