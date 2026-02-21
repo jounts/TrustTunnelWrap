@@ -3,6 +3,7 @@ use std::time::Duration;
 
 const TUN_NAME: &str = "tun0";
 const OPKG_TUN_NAME: &str = "opkgtun0";
+const NDM_IF_NAME: &str = "OpkgTun0";
 const ROUTE_METRIC: &str = "500";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -49,6 +50,63 @@ fn extract_server_ips(addresses: &[String]) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn ndmc(cmd: &str) {
+    run_cmd_ok("ndmc", &["-c", cmd]);
+}
+
+fn get_tun_ip_mask() -> Option<(String, String)> {
+    let out = run_cmd("ip", &["-o", "addr", "show", OPKG_TUN_NAME]).ok()?;
+    for line in out.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if let Some(i) = parts.iter().position(|&p| p == "inet") {
+            let cidr = parts.get(i + 1)?;
+            let mut split = cidr.split('/');
+            let ip = split.next()?.to_string();
+            let prefix: u8 = split.next().unwrap_or("32").parse().unwrap_or(32);
+            let mask = prefix_to_netmask(prefix);
+            return Some((ip, mask));
+        }
+    }
+    None
+}
+
+fn prefix_to_netmask(prefix: u8) -> String {
+    let bits: u32 = if prefix >= 32 {
+        0xFFFF_FFFF
+    } else {
+        !((1u32 << (32 - prefix)) - 1)
+    };
+    format!(
+        "{}.{}.{}.{}",
+        (bits >> 24) & 0xFF,
+        (bits >> 16) & 0xFF,
+        (bits >> 8) & 0xFF,
+        bits & 0xFF
+    )
+}
+
+fn register_ndm_interface() {
+    log::info!("[routing] registering {} in NDM", NDM_IF_NAME);
+
+    ndmc(&format!("interface {}", NDM_IF_NAME));
+
+    if let Some((ip, mask)) = get_tun_ip_mask() {
+        ndmc(&format!("interface {} ip address {} {}", NDM_IF_NAME, ip, mask));
+    }
+
+    ndmc(&format!("interface {} ip global auto", NDM_IF_NAME));
+    ndmc(&format!("interface {} security-level public", NDM_IF_NAME));
+    ndmc(&format!("interface {} up", NDM_IF_NAME));
+    ndmc(&format!("ip route default {}", NDM_IF_NAME));
+}
+
+fn unregister_ndm_interface() {
+    log::info!("[routing] removing {} from NDM", NDM_IF_NAME);
+
+    ndmc(&format!("no ip route default {}", NDM_IF_NAME));
+    ndmc(&format!("no interface {}", NDM_IF_NAME));
 }
 
 fn wait_for_tun() -> bool {
@@ -127,6 +185,8 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
         &["-t", "nat", "-A", "POSTROUTING", "-o", OPKG_TUN_NAME, "-j", "MASQUERADE"],
     );
 
+    register_ndm_interface();
+
     log::info!("[routing] setup complete (WAN={})", wan_if);
     crate::logs::global_buffer().push(format!("[routing] setup complete (WAN={})", wan_if));
     Ok(wan_if)
@@ -178,6 +238,7 @@ pub fn teardown_routing(server_addresses: &[String]) {
         run_cmd_ok("ip", &["route", "del", &format!("{}/32", ip)]);
     }
 
+    unregister_ndm_interface();
     run_cmd_ok("ip", &["link", "del", OPKG_TUN_NAME]);
 
     log::info!("[routing] teardown complete");
