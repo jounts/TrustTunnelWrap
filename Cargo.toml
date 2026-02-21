@@ -2,7 +2,7 @@
 name = "trusttunnel-keenetic"
 version = "1.0.0"
 edition = "2021"
-authors = ["TrustTunnel Community"]
+authors = ["jounts"]
 description = "TrustTunnel VPN wrapper for Keenetic/Netcraze routers"
 license = "MIT"
 
