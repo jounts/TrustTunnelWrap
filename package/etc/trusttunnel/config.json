@@ -25,5 +25,8 @@
   "logging": {
     "level": "info",
     "max_lines": 500
+  },
+  "routing": {
+    "enabled": true
   }
 }

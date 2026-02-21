@@ -11,6 +11,8 @@ pub struct WrapperConfig {
     pub webui: WebUISettings,
     #[serde(default)]
     pub logging: LogSettings,
+    #[serde(default)]
+    pub routing: RoutingSettings,
 }
 
 /// Settings that map to TrustTunnelClient's TOML config.
@@ -70,6 +72,18 @@ pub struct LogSettings {
     pub level: String,
     #[serde(default = "default_max_lines")]
     pub max_lines: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutingSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for RoutingSettings {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 fn default_upstream_protocol() -> String { "http2".into() }

@@ -1,6 +1,7 @@
 mod auth;
 mod config;
 mod logs;
+mod routing;
 mod tunnel;
 mod webui;
 
@@ -73,7 +74,7 @@ fn main() {
     let config = Arc::new(Mutex::new(cfg.clone()));
 
     // Create tunnel manager
-    let tunnel = tunnel::TunnelManager::new(cfg.tunnel.clone());
+    let tunnel = tunnel::TunnelManager::new(cfg.tunnel.clone(), cfg.routing.enabled);
 
     // Set up signal handlers
     let tunnel_for_signal = tunnel.clone();

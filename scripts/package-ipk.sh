@@ -65,13 +65,13 @@ cat > "$PKG_ROOT/CONTROL/control" << EOF
 Package: trusttunnel-keenetic
 Version: ${VERSION}
 Architecture: ${OPKG_ARCH}
-Maintainer: TrustTunnel Community
+Maintainer: jounts
 Section: net
 Priority: optional
 Description: TrustTunnel VPN wrapper for Keenetic/Netcraze routers
  Includes web management interface, NDM API auth, and auto-reconnect.
-Homepage: https://github.com/TrustTunnel/TrustTunnelClient
-Depends: libc
+Homepage: https://github.com/jounts/TrustTunnelWrap
+Depends: libc, iptables
 Installed-Size: ${INSTALLED_SIZE}
 EOF
 

@@ -1,5 +1,6 @@
 use crate::config::{generate_client_toml, TunnelSettings};
 use crate::logs;
+use crate::routing;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,10 +24,12 @@ pub struct TunnelManager {
     running: AtomicBool,
     should_stop: AtomicBool,
     connect_time: Mutex<Option<Instant>>,
+    routing_enabled: bool,
+    routing_active: Arc<AtomicBool>,
 }
 
 impl TunnelManager {
-    pub fn new(settings: TunnelSettings) -> Arc<Self> {
+    pub fn new(settings: TunnelSettings, routing_enabled: bool) -> Arc<Self> {
         Arc::new(Self {
             settings: Mutex::new(settings),
             status: Mutex::new(TunnelStatus::default()),
@@ -34,6 +37,8 @@ impl TunnelManager {
             running: AtomicBool::new(false),
             should_stop: AtomicBool::new(false),
             connect_time: Mutex::new(None),
+            routing_enabled,
+            routing_active: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -108,13 +113,38 @@ impl TunnelManager {
 
         self.should_stop.store(false, Ordering::SeqCst);
         self.running.store(true, Ordering::SeqCst);
-        self.spawn_process()
+        self.spawn_process()?;
+        self.spawn_routing_setup();
+        Ok(())
+    }
+
+    fn spawn_routing_setup(&self) {
+        if !self.routing_enabled {
+            return;
+        }
+        let addresses = self.settings.lock().unwrap().addresses.clone();
+        let flag = self.routing_active.clone();
+        std::thread::Builder::new()
+            .name("routing-setup".into())
+            .spawn(move || match routing::setup_routing(&addresses) {
+                Ok(()) => flag.store(true, Ordering::SeqCst),
+                Err(e) => log::error!("[routing] setup failed: {}", e),
+            })
+            .ok();
+    }
+
+    fn teardown_if_active(&self) {
+        if self.routing_active.swap(false, Ordering::SeqCst) {
+            let addresses = self.settings.lock().unwrap().addresses.clone();
+            routing::teardown_routing(&addresses);
+        }
     }
 
     pub fn stop(&self) {
         self.should_stop.store(true, Ordering::SeqCst);
         self.running.store(false, Ordering::SeqCst);
         self.kill_child();
+        self.teardown_if_active();
     }
 
     fn kill_child(&self) {
@@ -202,6 +232,8 @@ impl TunnelManager {
             };
 
             if exited && self.running.load(Ordering::SeqCst) && !self.should_stop.load(Ordering::SeqCst) {
+                self.teardown_if_active();
+
                 log::info!("Reconnecting in {} seconds...", reconnect_delay);
                 logs::global_buffer().push(format!(
                     "[tunnel] reconnecting in {}s...",
@@ -213,6 +245,8 @@ impl TunnelManager {
                     if let Err(e) = self.spawn_process() {
                         log::error!("Respawn failed: {}", e);
                         self.status.lock().unwrap().last_error = e;
+                    } else {
+                        self.spawn_routing_setup();
                     }
                 }
             }
