@@ -152,15 +152,22 @@ cargo build --release
 
 ### Кросс-компиляция для роутера
 
+Для aarch64, armv7, x86_64 используется [cross](https://github.com/cross-rs/cross) (Docker):
+
 ```sh
-# Установите cross
 cargo install cross --git https://github.com/cross-rs/cross
-
-# Соберите для aarch64
 cross build --release --target aarch64-unknown-linux-musl
+```
 
-# Или используйте скрипт
-./scripts/build-release.sh aarch64-unknown-linux-musl
+Для mipsel — прямая компиляция через тулчейн [musl.cc](https://musl.cc) (без Docker):
+
+```sh
+# Установите тулчейн
+wget -qO- https://musl.cc/mipsel-linux-musl-cross.tgz | sudo tar xzf - -C /usr/local/ --strip-components=1
+
+# Добавьте Rust target и соберите
+rustup target add mipsel-unknown-linux-musl
+cargo build --release --target mipsel-unknown-linux-musl
 ```
 
 ### Сборка IPK-пакета
@@ -183,8 +190,8 @@ cross build --release --target aarch64-unknown-linux-musl
 При пуше тега `v*` GitHub Actions автоматически:
 
 1. Скачивает pre-built `trusttunnel_client` для каждой архитектуры
-2. Собирает wrapper через `cross` (статическая линковка musl)
-3. Пакует `.ipk` для aarch64, mipsel, armv7, x86_64
+2. Собирает wrapper: `cross` для aarch64/armv7/x86_64, `cargo` + musl.cc тулчейн для mipsel
+3. Пакует `.ipk` (формат tar.gz для Entware) для aarch64, mipsel, armv7, x86_64
 4. Проверяет размер (предупреждение при > 10 MB)
 5. Публикует Release с пакетами и SHA256SUMS
 
