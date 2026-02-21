@@ -64,21 +64,31 @@ fn find_ndmc() -> &'static str {
 
 fn ndmc(cmd: &str) {
     let bin = find_ndmc();
-    match run_cmd(bin, &["-c", cmd]) {
-        Ok(out) => {
-            let msg = if out.trim().is_empty() {
-                format!("[ndmc] ok: {}", cmd)
-            } else {
-                format!("[ndmc] {}: {}", cmd, out.trim())
-            };
-            log::info!("{}", msg);
-            crate::logs::global_buffer().push(msg);
-        }
+    let output = match Command::new(bin).args(&["-c", cmd]).output() {
+        Ok(o) => o,
         Err(e) => {
-            let msg = format!("[ndmc] '{}' failed: {}", cmd, e);
+            let msg = format!("[ndmc] exec '{}' error: {}", cmd, e);
             log::warn!("{}", msg);
             crate::logs::global_buffer().push(msg);
+            return;
         }
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let combined = match (stdout.is_empty(), stderr.is_empty()) {
+        (false, false) => format!("{} | {}", stdout, stderr),
+        (false, true) => stdout,
+        (true, false) => stderr,
+        (true, true) => String::new(),
+    };
+    if output.status.success() {
+        let msg = format!("[ndmc] ok: {} {}", cmd, combined);
+        log::info!("{}", msg);
+        crate::logs::global_buffer().push(msg);
+    } else {
+        let msg = format!("[ndmc] '{}' exit={} {}", cmd, output.status.code().unwrap_or(-1), combined);
+        log::warn!("{}", msg);
+        crate::logs::global_buffer().push(msg);
     }
 }
 
