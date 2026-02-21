@@ -121,6 +121,7 @@ jobs:
           if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
             cross build --release --target ${{ steps.target.outputs.triple }}
           else
+            export RUSTFLAGS="-C link-arg=-Wl,--gc-sections -C target-feature=+crt-static -C link-arg=-L/opt/mipsel-cross/mipsel-unknown-linux-musl/lib"
             cargo +nightly build --release --target ${{ steps.target.outputs.triple }} -Zbuild-std=std,panic_abort
           fi
           ls -lh target/${{ steps.target.outputs.triple }}/release/trusttunnel-keenetic
