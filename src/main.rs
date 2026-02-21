@@ -96,7 +96,20 @@ fn main() {
     }
 
     // Start WebUI (blocks on the main thread)
-    let web = webui::WebUI::new(tunnel, config, args.config);
+    let ndm_host = if cfg.webui.ndm_host.is_empty() {
+        auth::detect_ndm_host()
+    } else {
+        cfg.webui.ndm_host.clone()
+    };
+    log::info!("NDM API endpoint: {}:{}", ndm_host, cfg.webui.ndm_port);
+
+    let web = webui::WebUI::new(
+        tunnel,
+        config,
+        args.config,
+        ndm_host,
+        cfg.webui.ndm_port,
+    );
     web.run(&cfg.webui.bind, cfg.webui.port);
 }
 

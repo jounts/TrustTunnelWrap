@@ -1,5 +1,32 @@
 use md5::{Digest as Md5Digest, Md5};
+use nix::ifaddrs::getifaddrs;
 use sha2::Sha256;
+use std::net::Ipv4Addr;
+
+const BRIDGE_INTERFACES: &[&str] = &["br0", "br-lan"];
+const FALLBACK_HOST: &str = "192.168.1.1";
+
+/// Auto-detect the router's LAN IP from the bridge interface.
+pub fn detect_ndm_host() -> String {
+    if let Ok(addrs) = getifaddrs() {
+        for ifaddr in addrs {
+            if !BRIDGE_INTERFACES.contains(&ifaddr.interface_name.as_str()) {
+                continue;
+            }
+            if let Some(addr) = ifaddr.address {
+                if let Some(sin) = addr.as_sockaddr_in() {
+                    let ip = Ipv4Addr::from(sin.ip());
+                    if !ip.is_loopback() && !ip.is_unspecified() {
+                        log::info!("NDM auth: detected LAN IP {} on {}", ip, ifaddr.interface_name);
+                        return ip.to_string();
+                    }
+                }
+            }
+        }
+    }
+    log::warn!("NDM auth: could not detect LAN IP, using {}", FALLBACK_HOST);
+    FALLBACK_HOST.to_string()
+}
 
 /// Keenetic NDM API challenge-response authentication.
 ///

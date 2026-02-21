@@ -58,6 +58,10 @@ pub struct WebUISettings {
     pub bind: String,
     #[serde(default = "default_true")]
     pub auth: bool,
+    #[serde(default)]
+    pub ndm_host: String,
+    #[serde(default = "default_ndm_port")]
+    pub ndm_port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +81,7 @@ fn default_port() -> u16 { 8080 }
 fn default_bind() -> String { "0.0.0.0".into() }
 fn default_true() -> bool { true }
 fn default_max_lines() -> usize { 500 }
+fn default_ndm_port() -> u16 { 80 }
 
 impl Default for TunnelSettings {
     fn default() -> Self {
@@ -111,6 +116,8 @@ impl Default for WebUISettings {
             port: default_port(),
             bind: default_bind(),
             auth: true,
+            ndm_host: String::new(),
+            ndm_port: default_ndm_port(),
         }
     }
 }
