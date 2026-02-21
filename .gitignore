@@ -1,0 +1,13 @@
+/target/
+*.ipk
+debian-binary
+control.tar.gz
+data.tar.gz
+ipk_root/
+.vscode/
+.idea/
+*.swp
+*.swo
+*.log
+.DS_Store
+Thumbs.db
