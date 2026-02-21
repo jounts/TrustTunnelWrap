@@ -77,9 +77,11 @@ jobs:
           rustup +nightly component add rust-src
           MUSL_CROSS_URL="https://github.com/cross-tools/musl-cross/releases/download/20250929/mipsel-unknown-linux-musl.tar.xz"
           wget --tries=3 --timeout=60 -O /tmp/mipsel-musl.tar.xz "$MUSL_CROSS_URL"
-          sudo tar xJf /tmp/mipsel-musl.tar.xz -C /usr/local/ --strip-components=1
+          sudo mkdir -p /opt/mipsel-cross
+          sudo tar xJf /tmp/mipsel-musl.tar.xz -C /opt/mipsel-cross --strip-components=1
           rm -f /tmp/mipsel-musl.tar.xz
-          mipsel-unknown-linux-musl-gcc --version
+          echo "/opt/mipsel-cross/bin" >> "$GITHUB_PATH"
+          /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc --version
 
       - name: Download pre-built TrustTunnelClient
         run: |
@@ -100,8 +102,8 @@ jobs:
 
       - name: Build wrapper
         env:
-          CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER: mipsel-unknown-linux-musl-gcc
-          CC_mipsel_unknown_linux_musl: mipsel-unknown-linux-musl-gcc
+          CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
+          CC_mipsel_unknown_linux_musl: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
         run: |
           if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
             cross build --release --target ${{ steps.target.outputs.triple }}
