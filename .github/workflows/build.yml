@@ -100,10 +100,17 @@ jobs:
               -v "${HOME}/.cargo/registry":/root/.cargo/registry \
               -v "${HOME}/.cargo/git":/root/.cargo/git \
               -e TRUSTTUNNEL_VERSION="${TRUSTTUNNEL_VERSION}" \
-              -e CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER=mipsel-linux-musl-gcc \
-              -e CC_mipsel_unknown_linux_musl=mipsel-linux-musl-gcc \
               ghcr.io/rust-cross/rust-musl-cross:mipsel-musl \
-              bash -c "rustup default nightly && cargo build --release --target mipsel-unknown-linux-musl -Zbuild-std=std,panic_abort"
+              bash -c '\
+                MUSL_GCC=$(find /usr/local -name "mipsel-linux-musl-gcc" -type f 2>/dev/null | head -1) && \
+                if [ -z "$MUSL_GCC" ]; then echo "ERROR: mipsel-linux-musl-gcc not found"; find /usr/local -name "*musl*gcc*" -o -name "*mipsel*gcc*" 2>/dev/null; exit 1; fi && \
+                MUSL_BIN=$(dirname "$MUSL_GCC") && \
+                export PATH="$MUSL_BIN:$PATH" && \
+                export CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER="$MUSL_GCC" && \
+                export CC_mipsel_unknown_linux_musl="$MUSL_GCC" && \
+                echo "Using toolchain: $MUSL_GCC" && \
+                rustup default nightly && \
+                cargo build --release --target mipsel-unknown-linux-musl -Zbuild-std=std,panic_abort'
           fi
           ls -lh target/${{ steps.target.outputs.triple }}/release/trusttunnel-keenetic
 
