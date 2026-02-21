@@ -1,0 +1,141 @@
+name: Build TrustTunnel IPK
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      arch:
+        description: 'Target architecture'
+        required: true
+        default: 'all'
+        type: choice
+        options: [aarch64, mipsel, armv7, x86_64, all]
+      client_version:
+        description: 'TrustTunnelClient release tag'
+        required: false
+        default: 'v0.99.105'
+
+env:
+  CLIENT_VERSION: ${{ github.event.inputs.client_version || 'v0.99.105' }}
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        run: |
+          if [ "${{ github.event.inputs.arch }}" = "all" ] || [ -z "${{ github.event.inputs.arch }}" ]; then
+            echo 'matrix=["aarch64","mipsel","armv7","x86_64"]' >> $GITHUB_OUTPUT
+          else
+            echo 'matrix=["${{ github.event.inputs.arch }}"]' >> $GITHUB_OUTPUT
+          fi
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: ${{ fromJson(needs.prepare.outputs.matrix) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Set target triple
+        id: target
+        run: |
+          case "${{ matrix.arch }}" in
+            aarch64) echo "triple=aarch64-unknown-linux-musl" >> $GITHUB_OUTPUT
+                     echo "client_arch=linux-aarch64" >> $GITHUB_OUTPUT ;;
+            mipsel)  echo "triple=mipsel-unknown-linux-musl" >> $GITHUB_OUTPUT
+                     echo "client_arch=linux-mipsel" >> $GITHUB_OUTPUT ;;
+            armv7)   echo "triple=armv7-unknown-linux-musleabihf" >> $GITHUB_OUTPUT
+                     echo "client_arch=linux-armv7" >> $GITHUB_OUTPUT ;;
+            x86_64)  echo "triple=x86_64-unknown-linux-musl" >> $GITHUB_OUTPUT
+                     echo "client_arch=linux-x86_64" >> $GITHUB_OUTPUT ;;
+          esac
+
+      - name: Download pre-built TrustTunnelClient
+        run: |
+          ./scripts/download-client.sh \
+            "${{ env.CLIENT_VERSION }}" \
+            "${{ steps.target.outputs.client_arch }}" \
+            "client_bin"
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-${{ matrix.arch }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-${{ matrix.arch }}-
+
+      - name: Build wrapper
+        run: |
+          cross build --release --target ${{ steps.target.outputs.triple }}
+          ls -lh target/${{ steps.target.outputs.triple }}/release/trusttunnel-keenetic
+
+      - name: Package IPK
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          [ "$VERSION" = "$GITHUB_REF" ] && VERSION="1.0.0-${{ github.run_number }}"
+
+          ./scripts/package-ipk.sh \
+            "${{ matrix.arch }}" \
+            "$VERSION" \
+            "target/${{ steps.target.outputs.triple }}/release/trusttunnel-keenetic" \
+            "client_bin"
+
+      - name: Check size
+        run: |
+          for f in *.ipk; do
+            SIZE=$(stat -c%s "$f")
+            echo "Package: $f — $((SIZE/1024)) KB"
+            if [ "$SIZE" -gt 10485760 ]; then
+              echo "::warning::Package $f exceeds 10MB ($((SIZE/1024)) KB)"
+            fi
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trusttunnel-keenetic-${{ matrix.arch }}
+          path: '*.ipk'
+          retention-days: 30
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd artifacts
+          sha256sum *.ipk > SHA256SUMS 2>/dev/null || true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/*.ipk
+            artifacts/SHA256SUMS
+          generate_release_notes: true

@@ -1,0 +1,56 @@
+#!/bin/sh
+set -e
+
+CONFIG_DIR="/opt/etc/trusttunnel"
+BIN_DIR="/opt/bin"
+
+chmod 755 "$BIN_DIR/trusttunnel-keenetic" 2>/dev/null || true
+chmod 755 "$BIN_DIR/trusttunnel_client" 2>/dev/null || true
+chmod 755 "$BIN_DIR/setup_wizard" 2>/dev/null || true
+
+# Create init script if init.d exists
+if [ -d /opt/etc/init.d ] && [ ! -f /opt/etc/init.d/S50trusttunnel ]; then
+    cat > /opt/etc/init.d/S50trusttunnel << 'INITEOF'
+#!/bin/sh
+NAME=trusttunnel-keenetic
+DAEMON=/opt/bin/$NAME
+CONFIG=/opt/etc/trusttunnel/config.json
+
+case "$1" in
+  start)
+    echo "Starting $NAME..."
+    if [ -x "$DAEMON" ]; then
+        $DAEMON --daemon --config "$CONFIG"
+    fi
+    ;;
+  stop)
+    echo "Stopping $NAME..."
+    killall $NAME 2>/dev/null || true
+    killall trusttunnel_client 2>/dev/null || true
+    ;;
+  restart)
+    $0 stop
+    sleep 1
+    $0 start
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+esac
+exit 0
+INITEOF
+    chmod +x /opt/etc/init.d/S50trusttunnel
+fi
+
+echo ""
+echo "======================================"
+echo "TrustTunnel installed."
+echo ""
+echo "Web UI: http://$(nvram get lan_ipaddr 2>/dev/null || echo '192.168.1.1'):8080"
+echo "Config: $CONFIG_DIR/config.json"
+echo ""
+echo "Start: /opt/etc/init.d/S50trusttunnel start"
+echo "======================================"
+echo ""
+
+exit 0

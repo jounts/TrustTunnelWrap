@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+if [ -x /opt/etc/init.d/S50trusttunnel ]; then
+    /opt/etc/init.d/S50trusttunnel stop 2>/dev/null || true
+else
+    killall trusttunnel-keenetic 2>/dev/null || true
+    killall trusttunnel_client 2>/dev/null || true
+fi
+
+rm -f /opt/etc/init.d/S50trusttunnel
+sleep 1
+
+exit 0

@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>TrustTunnel Manager</title>
+<style>
+:root{--p:#007bff;--ph:#0056b3;--ok:#28a745;--err:#dc3545;--bg:#f8f9fa;--card:#fff;--txt:#212529;--muted:#6c757d;--brd:#dee2e6}
+@media(prefers-color-scheme:dark){:root{--bg:#1a1a2e;--card:#16213e;--txt:#eee;--muted:#aaa;--brd:#333}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--txt);line-height:1.5;padding:1rem;max-width:860px;margin:0 auto}
+h1{margin:1rem 0;font-size:1.4rem}h2{margin:.8rem 0 .4rem;font-size:1.1rem}
+.c{background:var(--card);border:1px solid var(--brd);border-radius:8px;padding:1rem;margin:1rem 0;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.fg{margin:.6rem 0}
+label{display:block;margin-bottom:.2rem;font-weight:500;font-size:.9rem}
+input,select,textarea{width:100%;padding:.45rem;border:1px solid var(--brd);border-radius:4px;background:var(--card);color:var(--txt);font-size:.95rem}
+input[type=checkbox]{width:auto;margin-right:.4rem}
+textarea{font-family:monospace;font-size:.85rem;resize:vertical}
+button{background:var(--p);color:#fff;border:none;padding:.45rem .9rem;border-radius:4px;cursor:pointer;font-size:.95rem;margin:.2rem .2rem .2rem 0}
+button:hover{background:var(--ph)}button:disabled{background:var(--muted);cursor:not-allowed}
+.dng{background:var(--err)}.dng:hover{background:#c82333}
+.st{display:inline-flex;align-items:center;gap:.4rem;padding:.35rem .7rem;border-radius:4px;font-weight:500;font-size:.9rem}
+.st.on{background:rgba(40,167,69,.15);color:var(--ok)}.st.off{background:rgba(220,53,69,.15);color:var(--err)}
+.st::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor}
+.log{font-family:'SF Mono',Consolas,monospace;font-size:.82rem;max-height:280px;overflow-y:auto;background:rgba(0,0,0,.04);border-radius:4px;padding:.5rem}
+@media(prefers-color-scheme:dark){.log{background:rgba(255,255,255,.04)}}
+.ll{padding:2px 0;border-bottom:1px dashed var(--brd)}.ll:last-child{border-bottom:none}
+.hide{display:none!important}
+.flex{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+.between{justify-content:space-between}
+.err{color:var(--err);margin:.4rem 0;font-size:.9rem}
+.ok{color:var(--ok);margin:.4rem 0;font-size:.9rem}
+footer{text-align:center;padding:1rem;color:var(--muted);font-size:.82rem}
+</style>
+</head>
+<body>
+<h1>TrustTunnel Manager</h1>
+
+<div id="login-card" class="c">
+<h2>Вход в систему</h2>
+<div class="fg"><label for="login">Логин роутера</label><input id="login" autocomplete="username" placeholder="admin"></div>
+<div class="fg"><label for="password">Пароль</label><input id="password" type="password" autocomplete="current-password"></div>
+<div id="login-err" class="err hide"></div>
+<button id="login-btn" onclick="doLogin()">Войти</button>
+</div>
+
+<div id="main" class="hide">
+
+<div class="c">
+<div class="flex between"><h2>Статус подключения</h2><span id="conn-st" class="st off">Отключено</span></div>
+<div id="info" class="hide" style="margin-top:.5rem;font-size:.9rem">
+<span>Uptime: <b id="uptime">-</b></span> &nbsp; <span>PID: <b id="pid">-</b></span>
+</div>
+<div id="last-err" class="err hide"></div>
+</div>
+
+<div class="c">
+<h2>Настройка туннеля</h2>
+<div class="fg"><label for="hostname">Hostname (SNI)</label><input id="hostname" placeholder="vpn.example.com"></div>
+<div class="fg"><label for="addresses">Адреса (через запятую)</label><input id="addresses" placeholder="1.2.3.4:443, 5.6.7.8:443"></div>
+<div class="fg"><label for="username">Имя пользователя</label><input id="username" placeholder="user"></div>
+<div class="fg"><label for="tt-password">Пароль endpoint</label><input id="tt-password" type="password"></div>
+<div class="fg"><label for="protocol">Протокол</label>
+<select id="protocol"><option value="http2">HTTP/2</option><option value="http3">HTTP/3 (QUIC)</option></select></div>
+<div class="fg"><label for="vpn-mode">Режим VPN</label>
+<select id="vpn-mode"><option value="general">Весь трафик</option><option value="selective">Выборочный</option></select></div>
+<div class="fg"><label for="dns">DNS (через запятую)</label><input id="dns" placeholder="tls://1.1.1.1"></div>
+<div class="fg"><label for="excl-routes">Исключённые маршруты</label>
+<textarea id="excl-routes" rows="2" placeholder="10.0.0.0/8, 192.168.0.0/16"></textarea></div>
+<div class="fg"><label><input type="checkbox" id="skip-verify"> Пропуск проверки сертификата</label></div>
+<div id="cfg-msg"></div>
+<div class="flex">
+<button onclick="saveConfig()">Сохранить</button>
+<button id="conn-btn" onclick="toggleConn()">Подключить</button>
+<button class="dng" onclick="doRestart()">Переподключить</button>
+</div>
+</div>
+
+<div class="c">
+<div class="flex between"><h2>Логи</h2><button onclick="loadLogs()" style="padding:.2rem .6rem;font-size:.85rem">Обновить</button></div>
+<div class="log" id="logs"><em>Загрузка...</em></div>
+</div>
+</div>
+
+<footer>trusttunnel-keenetic v1.0.0 | <a href="#" onclick="doLogout();return false">Выйти</a></footer>
+
+<script>
+const API='/api';
+let token=localStorage.getItem('tt_token'),sp,lp;
+
+document.addEventListener('DOMContentLoaded',()=>{if(token){showMain();poll();loadCfg()}});
+
+async function api(path,method='GET',body){
+  const h={'Authorization':token};
+  if(body)h['Content-Type']='application/json';
+  const r=await fetch(API+path,{method,headers:h,body:body?JSON.stringify(body):null});
+  if(r.status===401){doLogout();throw new Error('unauthorized')}
+  return r.json();
+}
+
+async function doLogin(){
+  const l=document.getElementById('login').value.trim(),p=document.getElementById('password').value,e=document.getElementById('login-err'),b=document.getElementById('login-btn');
+  if(!l||!p){e.textContent='Введите логин и пароль';e.classList.remove('hide');return}
+  b.disabled=true;e.classList.add('hide');
+  try{
+    const d=await fetch(API+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({login:l,password:p})}).then(r=>r.json());
+    if(d.token){token=d.token;localStorage.setItem('tt_token',token);showMain();poll();loadCfg()}
+    else throw new Error(d.error||'Ошибка');
+  }catch(err){e.textContent=err.message;e.classList.remove('hide')}
+  finally{b.disabled=false}
+}
+
+function doLogout(){token=null;localStorage.removeItem('tt_token');clearInterval(sp);clearInterval(lp);
+  document.getElementById('main').classList.add('hide');document.getElementById('login-card').classList.remove('hide');document.getElementById('password').value=''}
+
+function showMain(){document.getElementById('login-card').classList.add('hide');document.getElementById('main').classList.remove('hide')}
+
+function poll(){clearInterval(sp);clearInterval(lp);updateStatus();loadLogs();sp=setInterval(updateStatus,5000);lp=setInterval(loadLogs,15000)}
+
+async function updateStatus(){
+  try{
+    const s=await api('/status');
+    const el=document.getElementById('conn-st'),info=document.getElementById('info'),btn=document.getElementById('conn-btn'),le=document.getElementById('last-err');
+    if(s.connected){el.textContent='Подключено';el.className='st on';info.classList.remove('hide');
+      document.getElementById('uptime').textContent=fmtUp(s.uptime_seconds);
+      document.getElementById('pid').textContent=s.pid||'-';btn.textContent='Отключить'}
+    else{el.textContent='Отключено';el.className='st off';info.classList.add('hide');btn.textContent='Подключить'}
+    if(s.last_error){le.textContent=s.last_error;le.classList.remove('hide')}else{le.classList.add('hide')}
+  }catch(e){}
+}
+
+function fmtUp(s){if(!s||s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m '+s%60+'s';return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m'}
+
+async function loadCfg(){
+  try{
+    const c=await api('/config');
+    document.getElementById('hostname').value=c.hostname||'';
+    document.getElementById('addresses').value=(c.addresses||[]).join(', ');
+    document.getElementById('username').value=c.username||'';
+    document.getElementById('tt-password').value=c.password||'';
+    document.getElementById('protocol').value=c.upstream_protocol||'http2';
+    document.getElementById('vpn-mode').value=c.vpn_mode||'general';
+    document.getElementById('dns').value=(c.dns_upstreams||[]).join(', ');
+    document.getElementById('excl-routes').value=(c.excluded_routes||[]).join(', ');
+    document.getElementById('skip-verify').checked=!!c.skip_verification;
+  }catch(e){}
+}
+
+async function saveConfig(){
+  const m=document.getElementById('cfg-msg');m.textContent='';m.className='';
+  const cfg={
+    hostname:document.getElementById('hostname').value.trim(),
+    addresses:document.getElementById('addresses').value.split(',').map(s=>s.trim()).filter(Boolean),
+    username:document.getElementById('username').value.trim(),
+    password:document.getElementById('tt-password').value,
+    upstream_protocol:document.getElementById('protocol').value,
+    vpn_mode:document.getElementById('vpn-mode').value,
+    dns_upstreams:document.getElementById('dns').value.split(',').map(s=>s.trim()).filter(Boolean),
+    excluded_routes:document.getElementById('excl-routes').value.split(',').map(s=>s.trim()).filter(Boolean),
+    skip_verification:document.getElementById('skip-verify').checked
+  };
+  if(!cfg.hostname||!cfg.addresses.length){m.textContent='Hostname и адреса обязательны';m.className='err';return}
+  try{await api('/config','POST',cfg);m.textContent='Конфигурация сохранена';m.className='ok'}
+  catch(e){m.textContent='Ошибка: '+e.message;m.className='err'}
+}
+
+async function toggleConn(){
+  const s=await api('/status');
+  await api('/control','POST',{action:s.connected?'disconnect':'connect'});
+  setTimeout(updateStatus,500);
+}
+
+async function doRestart(){
+  if(!confirm('Переподключить туннель?'))return;
+  await api('/control','POST',{action:'restart'});setTimeout(updateStatus,1000);
+}
+
+async function loadLogs(){
+  try{
+    const d=await api('/logs?limit=100');
+    const el=document.getElementById('logs');
+    if(!d.lines||!d.lines.length){el.innerHTML='<em>Нет логов</em>';return}
+    el.innerHTML=d.lines.map(l=>'<div class="ll">'+esc(l)+'</div>').join('');
+    el.scrollTop=el.scrollHeight;
+  }catch(e){}
+}
+
+function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+</script>
+</body>
+</html>
