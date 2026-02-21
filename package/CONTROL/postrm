@@ -8,15 +8,15 @@ rm -f /opt/etc/init.d/S50trusttunnel
 rmdir /opt/etc/trusttunnel 2>/dev/null || true
 
 # Final iptables / routing cleanup in case prerm was skipped
-iptables -D FORWARD -i br+ -o opkgtun0 -j ACCEPT 2>/dev/null || true
-iptables -D FORWARD -i opkgtun0 -o br+ -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-iptables -t nat -D POSTROUTING -o opkgtun0 -j MASQUERADE 2>/dev/null || true
-ip route del default dev opkgtun0 2>/dev/null || true
+iptables -D FORWARD -i br+ -o OpkgTun0 -j ACCEPT 2>/dev/null || true
+iptables -D FORWARD -i OpkgTun0 -o br+ -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+iptables -t nat -D POSTROUTING -o OpkgTun0 -j MASQUERADE 2>/dev/null || true
+ip route del default dev OpkgTun0 2>/dev/null || true
 
 # Remove NDM interface registration
-ndmc -c 'no ip route default OpkgTun0' 2>/dev/null || true
+ndmc -c 'no ip route default auto interface OpkgTun0' 2>/dev/null || true
 ndmc -c 'no interface OpkgTun0' 2>/dev/null || true
 
-ip link del opkgtun0 2>/dev/null || true
+ip link del OpkgTun0 2>/dev/null || true
 
 exit 0

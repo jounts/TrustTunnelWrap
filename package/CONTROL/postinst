@@ -28,13 +28,13 @@ case "$1" in
     killall $NAME 2>/dev/null || true
     killall trusttunnel_client 2>/dev/null || true
     # Clean up routing (in case wrapper did not teardown gracefully)
-    iptables -D FORWARD -i br+ -o opkgtun0 -j ACCEPT 2>/dev/null || true
-    iptables -D FORWARD -i opkgtun0 -o br+ -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-    iptables -t nat -D POSTROUTING -o opkgtun0 -j MASQUERADE 2>/dev/null || true
-    ip route del default dev opkgtun0 2>/dev/null || true
-    ndmc -c 'no ip route default OpkgTun0' 2>/dev/null || true
+    iptables -D FORWARD -i br+ -o OpkgTun0 -j ACCEPT 2>/dev/null || true
+    iptables -D FORWARD -i OpkgTun0 -o br+ -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+    iptables -t nat -D POSTROUTING -o OpkgTun0 -j MASQUERADE 2>/dev/null || true
+    ip route del default dev OpkgTun0 2>/dev/null || true
+    ndmc -c 'no ip route default auto interface OpkgTun0' 2>/dev/null || true
     ndmc -c 'no interface OpkgTun0' 2>/dev/null || true
-    ip link del opkgtun0 2>/dev/null || true
+    ip link del OpkgTun0 2>/dev/null || true
     ;;
   restart)
     $0 stop

@@ -2,7 +2,7 @@ use std::process::Command;
 use std::time::Duration;
 
 const TUN_NAME: &str = "tun0";
-const OPKG_TUN_NAME: &str = "opkgtun0";
+const OPKG_TUN_NAME: &str = "OpkgTun0";
 const NDM_IF_NAME: &str = "OpkgTun0";
 const ROUTE_METRIC: &str = "500";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -137,13 +137,16 @@ fn register_ndm_interface() {
     ndmc(&format!("interface {} ip global auto", NDM_IF_NAME));
     ndmc(&format!("interface {} security-level public", NDM_IF_NAME));
     ndmc(&format!("interface {} up", NDM_IF_NAME));
-    ndmc(&format!("ip route default {}", NDM_IF_NAME));
+    ndmc(&format!("ip route default auto interface {}", NDM_IF_NAME));
 }
 
 fn unregister_ndm_interface() {
-    log::info!("[routing] removing {} from NDM", NDM_IF_NAME);
+    let msg = format!("[routing] removing {} from NDM", NDM_IF_NAME);
+    log::info!("{}", msg);
+    crate::logs::global_buffer().push(msg);
 
-    ndmc(&format!("no ip route default {}", NDM_IF_NAME));
+    ndmc(&format!("no ip route default auto interface {}", NDM_IF_NAME));
+    ndmc(&format!("interface {} down", NDM_IF_NAME));
     ndmc(&format!("no interface {}", NDM_IF_NAME));
 }
 
