@@ -4,13 +4,14 @@
 
 set -euo pipefail
 
-if tar --format=gnu --version >/dev/null 2>&1; then
+TAR_FMT=""
+_test_tar=$(mktemp)
+if tar --format=gnu -cf "$_test_tar" --files-from /dev/null 2>/dev/null; then
     TAR_FMT="--format=gnu"
-elif tar --format=gnutar -cf /dev/null /dev/null 2>/dev/null; then
+elif tar --format=gnutar -cf "$_test_tar" --files-from /dev/null 2>/dev/null; then
     TAR_FMT="--format=gnutar"
-else
-    TAR_FMT=""
 fi
+rm -f "$_test_tar"
 
 ARCH="${1:?Usage: $0 <arch> <version> <wrapper_bin> <client_dir>}"
 VERSION="${2:?}"
