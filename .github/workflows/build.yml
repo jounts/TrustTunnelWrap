@@ -116,6 +116,7 @@ jobs:
         env:
           CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
           CC_mipsel_unknown_linux_musl: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
+          TRUSTTUNNEL_VERSION: ${{ github.ref_name || format('0.0.0-dev.{0}', github.run_number) }}
         run: |
           if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
             cross build --release --target ${{ steps.target.outputs.triple }}

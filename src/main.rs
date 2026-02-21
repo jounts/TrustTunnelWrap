@@ -41,7 +41,7 @@ fn main() {
 
     log::info!(
         "trusttunnel-keenetic v{} starting",
-        env!("CARGO_PKG_VERSION")
+        env!("TRUSTTUNNEL_VERSION")
     );
 
     let cfg = match WrapperConfig::load(&args.config) {
