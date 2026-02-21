@@ -187,6 +187,9 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     run_cmd("ip", &["link", "set", TUN_NAME, "name", OPKG_TUN_NAME])?;
     run_cmd("ip", &["link", "set", OPKG_TUN_NAME, "up"])?;
 
+    // Register in NDM first — NDM may reconfigure iptables/routes on registration
+    register_ndm_interface();
+
     let wan_if = current_wan_interface().ok_or("failed to detect WAN interface")?;
     log::info!("[routing] WAN interface: {}", wan_if);
 
@@ -228,8 +231,6 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
         "iptables",
         &["-t", "nat", "-A", "POSTROUTING", "-o", OPKG_TUN_NAME, "-j", "MASQUERADE"],
     );
-
-    register_ndm_interface();
 
     log::info!("[routing] setup complete (WAN={})", wan_if);
     crate::logs::global_buffer().push(format!("[routing] setup complete (WAN={})", wan_if));
