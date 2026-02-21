@@ -39,8 +39,7 @@ pub fn detect_ndm_host() -> String {
 pub fn authenticate(router_host: &str, router_port: u16, login: &str, password: &str) -> bool {
     let base_url = format!("http://{}:{}", router_host, router_port);
 
-    // Step 1: fetch challenge
-    let (realm, challenge) = match fetch_challenge(&base_url) {
+    let (realm, challenge, cookie) = match fetch_challenge(&base_url) {
         Some(v) => v,
         None => {
             log::error!("NDM auth: failed to fetch challenge from {}", base_url);
@@ -48,17 +47,13 @@ pub fn authenticate(router_host: &str, router_port: u16, login: &str, password: 
         }
     };
 
-    // Step 2-3: compute response
     let response = compute_response(login, &realm, password, &challenge);
-
-    // Step 4: submit
-    submit_auth(&base_url, login, &response)
+    submit_auth(&base_url, login, &response, &cookie)
 }
 
-fn fetch_challenge(base_url: &str) -> Option<(String, String)> {
+fn fetch_challenge(base_url: &str) -> Option<(String, String, String)> {
     let url = format!("{}/auth", base_url);
 
-    // We expect a 401 response with the challenge headers
     let resp = match ureq::get(&url).call() {
         Ok(r) => r,
         Err(ureq::Error::Status(401, r)) => r,
@@ -71,12 +66,20 @@ fn fetch_challenge(base_url: &str) -> Option<(String, String)> {
     let realm = resp.header("X-NDM-Realm")?.to_string();
     let challenge = resp.header("X-NDM-Challenge")?.to_string();
 
+    let cookie = resp
+        .header("Set-Cookie")
+        .unwrap_or("")
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .to_string();
+
     if realm.is_empty() || challenge.is_empty() {
         log::error!("NDM auth: empty realm or challenge");
         return None;
     }
 
-    Some((realm, challenge))
+    Some((realm, challenge, cookie))
 }
 
 fn compute_response(login: &str, realm: &str, password: &str, challenge: &str) -> String {
@@ -91,17 +94,20 @@ fn compute_response(login: &str, realm: &str, password: &str, challenge: &str) -
     hex::encode(sha_hash)
 }
 
-fn submit_auth(base_url: &str, login: &str, response: &str) -> bool {
+fn submit_auth(base_url: &str, login: &str, response: &str, cookie: &str) -> bool {
     let url = format!("{}/auth", base_url);
     let body = serde_json::json!({
         "login": login,
         "password": response
     });
 
-    match ureq::post(&url)
-        .set("Content-Type", "application/json")
-        .send_string(&body.to_string())
-    {
+    let mut req = ureq::post(&url)
+        .set("Content-Type", "application/json");
+    if !cookie.is_empty() {
+        req = req.set("Cookie", cookie);
+    }
+
+    match req.send_string(&body.to_string()) {
         Ok(resp) => {
             let code = resp.status();
             if code == 200 || code == 302 {
