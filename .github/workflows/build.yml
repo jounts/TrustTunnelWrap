@@ -100,6 +100,8 @@ jobs:
               -v "${HOME}/.cargo/registry":/root/.cargo/registry \
               -v "${HOME}/.cargo/git":/root/.cargo/git \
               -e TRUSTTUNNEL_VERSION="${TRUSTTUNNEL_VERSION}" \
+              -e CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER=mipsel-linux-musl-gcc \
+              -e CC_mipsel_unknown_linux_musl=mipsel-linux-musl-gcc \
               ghcr.io/rust-cross/rust-musl-cross:mipsel-musl \
               bash -c "rustup default nightly && cargo build --release --target mipsel-unknown-linux-musl -Zbuild-std=std,panic_abort"
           fi
