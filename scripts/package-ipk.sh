@@ -61,19 +61,22 @@ cp package/CONTROL/prerm "$PKG_ROOT/CONTROL/"
 cp package/CONTROL/conffiles "$PKG_ROOT/CONTROL/"
 chmod 755 "$PKG_ROOT/CONTROL/postinst" "$PKG_ROOT/CONTROL/prerm"
 
-# Build archives
-(cd "$PKG_ROOT" && tar --numeric-owner --owner=0 --group=0 -czf ../data.tar.gz --exclude='CONTROL' .)
-(cd "$PKG_ROOT/CONTROL" && tar --numeric-owner --owner=0 --group=0 -czf ../../control.tar.gz .)
-echo "2.0" > debian-binary
+# Build archives (Entware uses tar.gz outer format, NOT ar like standard OpenWrt)
+WORK="$(mktemp -d)"
+(cd "$PKG_ROOT" && tar --format=gnu --numeric-owner --owner=0 --group=0 -czf "$WORK/data.tar.gz" --exclude='CONTROL' .)
+(cd "$PKG_ROOT/CONTROL" && tar --format=gnu --numeric-owner --owner=0 --group=0 -czf "$WORK/control.tar.gz" .)
+printf "2.0\n" > "$WORK/debian-binary"
 
-# Assemble IPK (ar archive)
-ar rc "$PKG_NAME" debian-binary control.tar.gz data.tar.gz
+cd "$WORK"
+tar --format=gnu --numeric-owner --owner=0 --group=0 \
+    -czf "$OLDPWD/$PKG_NAME" ./debian-binary ./control.tar.gz ./data.tar.gz
+cd "$OLDPWD"
 
 # Report
 SIZE=$(stat -c%s "$PKG_NAME" 2>/dev/null || stat -f%z "$PKG_NAME")
 echo "Package: ${PKG_NAME} — $((SIZE / 1024)) KB"
 
-# Cleanup temp files
-rm -rf "$PKG_ROOT" debian-binary control.tar.gz data.tar.gz
+# Cleanup
+rm -rf "$PKG_ROOT" "$WORK"
 
 echo "Done."
