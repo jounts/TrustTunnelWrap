@@ -1,0 +1,15 @@
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-musl-gcc"
+rustflags = ["-C", "link-arg=-Wl,--gc-sections", "-C", "target-feature=+crt-static"]
+
+[target.mipsel-unknown-linux-musl]
+linker = "mipsel-linux-musl-gcc"
+rustflags = ["-C", "link-arg=-Wl,--gc-sections", "-C", "target-feature=+crt-static"]
+
+[target.armv7-unknown-linux-musleabihf]
+linker = "arm-linux-musleabihf-gcc"
+rustflags = ["-C", "link-arg=-Wl,--gc-sections", "-C", "target-feature=+crt-static"]
+
+[target.x86_64-unknown-linux-musl]
+linker = "x86_64-linux-musl-gcc"
+rustflags = ["-C", "link-arg=-Wl,--gc-sections", "-C", "target-feature=+crt-static"]
