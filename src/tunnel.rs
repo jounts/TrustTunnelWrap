@@ -236,13 +236,14 @@ impl TunnelManager {
         self.respawn_with_delay(reconnect_delay);
     }
 
-    fn reroute(&self) {
-        let msg = "[watchdog] WAN changed, re-configuring routing";
+    fn reroute(&self, new_wan: &str) {
+        let msg = format!("[watchdog] WAN changed → {}, updating server routes", new_wan);
         log::info!("{}", msg);
-        logs::global_buffer().push(msg.into());
+        logs::global_buffer().push(msg);
 
-        self.teardown_if_active();
-        self.spawn_routing_setup();
+        let addresses = self.settings.lock().unwrap().addresses.clone();
+        routing::reroute_server_via_wan(&addresses, new_wan);
+        *self.last_wan_interface.lock().unwrap() = new_wan.to_string();
         self.watchdog_failures.store(0, Ordering::SeqCst);
     }
 
@@ -258,7 +259,7 @@ impl TunnelManager {
         *self.last_watchdog_check.lock().unwrap() = Instant::now();
 
         if !routing::is_tun_alive() {
-            self.full_restart("opkgtun0 interface disappeared", reconnect_delay);
+            self.full_restart("OpkgTun0 interface disappeared", reconnect_delay);
             return;
         }
 
@@ -270,7 +271,7 @@ impl TunnelManager {
                     saved_wan,
                     current_wan
                 );
-                self.reroute();
+                self.reroute(&current_wan);
                 return;
             }
         }

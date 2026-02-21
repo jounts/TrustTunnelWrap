@@ -32,7 +32,12 @@ pub fn current_wan_interface() -> Option<String> {
     for line in out.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if let Some(i) = parts.iter().position(|&p| p == "dev") {
-            return parts.get(i + 1).map(|s| s.to_string());
+            if let Some(&dev) = parts.get(i + 1) {
+                // Skip our own tunnel — we want the real WAN
+                if dev != OPKG_TUN_NAME && dev != TUN_NAME {
+                    return Some(dev.to_string());
+                }
+            }
         }
     }
     None
@@ -229,6 +234,22 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     log::info!("[routing] setup complete (WAN={})", wan_if);
     crate::logs::global_buffer().push(format!("[routing] setup complete (WAN={})", wan_if));
     Ok(wan_if)
+}
+
+/// Update only the server routes to go through a new WAN interface.
+/// Does NOT touch the TUN device, iptables, or NDM.
+pub fn reroute_server_via_wan(server_addresses: &[String], new_wan: &str) {
+    log::info!("[routing] re-routing server IPs via {}", new_wan);
+    for ip in extract_server_ips(server_addresses) {
+        let cidr = format!("{}/32", ip);
+        run_cmd_ok("ip", &["route", "del", &cidr]);
+        if let Err(e) = run_cmd("ip", &["route", "add", &cidr, "dev", new_wan]) {
+            log::warn!("[routing] server route {} via {}: {}", cidr, new_wan, e);
+        }
+    }
+    let msg = format!("[routing] server routes updated to WAN={}", new_wan);
+    log::info!("{}", msg);
+    crate::logs::global_buffer().push(msg);
 }
 
 // --------------- watchdog helpers ---------------
