@@ -75,7 +75,9 @@ jobs:
         run: |
           rustup toolchain install nightly --profile minimal
           rustup +nightly component add rust-src
-          wget -qO- https://musl.cc/mipsel-linux-musl-cross.tgz | sudo tar xzf - -C /usr/local/ --strip-components=1
+          wget --tries=3 --timeout=30 -O /tmp/mipsel-musl.tgz https://musl.cc/mipsel-linux-musl-cross.tgz
+          sudo tar xzf /tmp/mipsel-musl.tgz -C /usr/local/ --strip-components=1
+          rm -f /tmp/mipsel-musl.tgz
           mipsel-linux-musl-gcc --version
 
       - name: Download pre-built TrustTunnelClient
