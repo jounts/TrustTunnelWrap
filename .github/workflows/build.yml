@@ -81,9 +81,18 @@ jobs:
           sudo tar xJf /tmp/mipsel-musl.tar.xz -C /opt/mipsel-cross --strip-components=1
           rm -f /tmp/mipsel-musl.tar.xz
           echo "/opt/mipsel-cross/bin" >> "$GITHUB_PATH"
-          echo "--- sysroot diagnostics ---"
-          /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc -print-sysroot || true
-          find /opt/mipsel-cross -name 'crt1.o' 2>/dev/null | head -5
+          # ld can't resolve the crosstool-ng sysroot after relocation;
+          # symlink CRT objects and libs to where ld actually searches.
+          SYSROOT=/opt/mipsel-cross/mipsel-unknown-linux-musl/sysroot
+          TARGET_LIB=/opt/mipsel-cross/mipsel-unknown-linux-musl/lib
+          GCC_LIB=/opt/mipsel-cross/lib/gcc/mipsel-unknown-linux-musl/$(ls /opt/mipsel-cross/lib/gcc/mipsel-unknown-linux-musl/)
+          sudo mkdir -p "$TARGET_LIB"
+          sudo ln -sf "$SYSROOT"/usr/lib/* "$TARGET_LIB/" 2>/dev/null || true
+          sudo ln -sf "$GCC_LIB"/crt*.o "$TARGET_LIB/" 2>/dev/null || true
+          # empty libunwind.a stub — musl + panic=abort doesn't need it
+          sudo /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-ar rcs "$TARGET_LIB/libunwind.a"
+          echo "--- verify CRT ---"
+          ls "$TARGET_LIB"/crt*.o "$TARGET_LIB"/libunwind.a
           /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc --version
 
       - name: Download pre-built TrustTunnelClient
@@ -107,7 +116,6 @@ jobs:
         env:
           CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
           CC_mipsel_unknown_linux_musl: /opt/mipsel-cross/bin/mipsel-unknown-linux-musl-gcc
-          CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_RUSTFLAGS: -C link-arg=--sysroot=/opt/mipsel-cross/mipsel-unknown-linux-musl/sysroot
         run: |
           if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
             cross build --release --target ${{ steps.target.outputs.triple }}
