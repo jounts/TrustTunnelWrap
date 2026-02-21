@@ -4,6 +4,14 @@
 
 set -euo pipefail
 
+if tar --format=gnu --version >/dev/null 2>&1; then
+    TAR_FMT="--format=gnu"
+elif tar --format=gnutar -cf /dev/null /dev/null 2>/dev/null; then
+    TAR_FMT="--format=gnutar"
+else
+    TAR_FMT=""
+fi
+
 ARCH="${1:?Usage: $0 <arch> <version> <wrapper_bin> <client_dir>}"
 VERSION="${2:?}"
 WRAPPER_BIN="${3:?}"
@@ -63,12 +71,12 @@ chmod 755 "$PKG_ROOT/CONTROL/postinst" "$PKG_ROOT/CONTROL/prerm"
 
 # Build archives (Entware uses tar.gz outer format, NOT ar like standard OpenWrt)
 WORK="$(mktemp -d)"
-(cd "$PKG_ROOT" && tar --format=gnu --numeric-owner --owner=0 --group=0 -czf "$WORK/data.tar.gz" --exclude='CONTROL' .)
-(cd "$PKG_ROOT/CONTROL" && tar --format=gnu --numeric-owner --owner=0 --group=0 -czf "$WORK/control.tar.gz" .)
+(cd "$PKG_ROOT" && tar $TAR_FMT --numeric-owner --owner=0 --group=0 -czf "$WORK/data.tar.gz" --exclude='CONTROL' .)
+(cd "$PKG_ROOT/CONTROL" && tar $TAR_FMT --numeric-owner --owner=0 --group=0 -czf "$WORK/control.tar.gz" .)
 printf "2.0\n" > "$WORK/debian-binary"
 
 cd "$WORK"
-tar --format=gnu --numeric-owner --owner=0 --group=0 \
+tar $TAR_FMT --numeric-owner --owner=0 --group=0 \
     -czf "$OLDPWD/$PKG_NAME" ./debian-binary ./control.tar.gz ./data.tar.gz
 cd "$OLDPWD"
 
