@@ -1,0 +1,29 @@
+{
+  "tunnel": {
+    "hostname": "",
+    "addresses": [],
+    "username": "",
+    "password": "",
+    "upstream_protocol": "http2",
+    "certificate": "",
+    "skip_verification": false,
+    "vpn_mode": "general",
+    "dns_upstreams": ["tls://1.1.1.1"],
+    "killswitch_enabled": false,
+    "included_routes": ["0.0.0.0/0", "2000::/3"],
+    "excluded_routes": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+    "mtu_size": 1280,
+    "socks_address": "",
+    "reconnect_delay": 5,
+    "loglevel": "info"
+  },
+  "webui": {
+    "port": 8080,
+    "bind": "0.0.0.0",
+    "auth": true
+  },
+  "logging": {
+    "level": "info",
+    "max_lines": 500
+  }
+}
