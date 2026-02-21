@@ -79,8 +79,7 @@ jobs:
           wget --tries=3 --timeout=60 -O /tmp/mipsel-musl.tar.xz "$MUSL_CROSS_URL"
           sudo tar xJf /tmp/mipsel-musl.tar.xz -C /usr/local/ --strip-components=1
           rm -f /tmp/mipsel-musl.tar.xz
-          sudo ln -sf mipsel-unknown-linux-musl-gcc /usr/local/bin/mipsel-linux-musl-gcc
-          mipsel-linux-musl-gcc --version
+          mipsel-unknown-linux-musl-gcc --version
 
       - name: Download pre-built TrustTunnelClient
         run: |
@@ -100,6 +99,9 @@ jobs:
           restore-keys: cargo-${{ matrix.arch }}-
 
       - name: Build wrapper
+        env:
+          CARGO_TARGET_MIPSEL_UNKNOWN_LINUX_MUSL_LINKER: mipsel-unknown-linux-musl-gcc
+          CC_mipsel_unknown_linux_musl: mipsel-unknown-linux-musl-gcc
         run: |
           if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
             cross build --release --target ${{ steps.target.outputs.triple }}
