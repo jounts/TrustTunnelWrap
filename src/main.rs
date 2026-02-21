@@ -74,7 +74,7 @@ fn main() {
     let config = Arc::new(Mutex::new(cfg.clone()));
 
     // Create tunnel manager
-    let tunnel = tunnel::TunnelManager::new(cfg.tunnel.clone(), cfg.routing.enabled);
+    let tunnel = tunnel::TunnelManager::new(cfg.tunnel.clone(), &cfg.routing);
 
     // Set up signal handlers
     let tunnel_for_signal = tunnel.clone();

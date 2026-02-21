@@ -26,7 +26,7 @@ fn run_cmd_ok(program: &str, args: &[&str]) {
     }
 }
 
-fn detect_wan_interface() -> Option<String> {
+pub fn current_wan_interface() -> Option<String> {
     let out = run_cmd("ip", &["-o", "route", "show", "to", "default"]).ok()?;
     for line in out.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -64,7 +64,8 @@ fn wait_for_tun() -> bool {
 
 /// Configure kernel routing and firewall after the VPN client creates tun0.
 /// Renames tun0 → opkgtun0, adds default route, iptables FORWARD + MASQUERADE.
-pub fn setup_routing(server_addresses: &[String]) -> Result<(), String> {
+/// Returns the detected WAN interface name on success.
+pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     log::info!("[routing] waiting for {} ...", TUN_NAME);
 
     if !wait_for_tun() {
@@ -84,7 +85,7 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<(), String> {
     run_cmd("ip", &["link", "set", TUN_NAME, "name", OPKG_TUN_NAME])?;
     run_cmd("ip", &["link", "set", OPKG_TUN_NAME, "up"])?;
 
-    let wan_if = detect_wan_interface().ok_or("failed to detect WAN interface")?;
+    let wan_if = current_wan_interface().ok_or("failed to detect WAN interface")?;
     log::info!("[routing] WAN interface: {}", wan_if);
 
     // Route VPN-server traffic through WAN to avoid a routing loop
@@ -126,10 +127,27 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<(), String> {
         &["-t", "nat", "-A", "POSTROUTING", "-o", OPKG_TUN_NAME, "-j", "MASQUERADE"],
     );
 
-    log::info!("[routing] setup complete");
-    crate::logs::global_buffer().push("[routing] setup complete".into());
-    Ok(())
+    log::info!("[routing] setup complete (WAN={})", wan_if);
+    crate::logs::global_buffer().push(format!("[routing] setup complete (WAN={})", wan_if));
+    Ok(wan_if)
 }
+
+// --------------- watchdog helpers ---------------
+
+pub fn is_tun_alive() -> bool {
+    std::path::Path::new(&format!("/sys/class/net/{}", OPKG_TUN_NAME)).exists()
+}
+
+pub fn check_connectivity() -> bool {
+    // Single ICMP ping through the tunnel interface, 5s timeout
+    run_cmd(
+        "ping",
+        &["-c1", "-W5", "-I", OPKG_TUN_NAME, "1.1.1.1"],
+    )
+    .is_ok()
+}
+
+// --------------- teardown ---------------
 
 /// Remove firewall rules, routes, and the tunnel interface.
 pub fn teardown_routing(server_addresses: &[String]) {

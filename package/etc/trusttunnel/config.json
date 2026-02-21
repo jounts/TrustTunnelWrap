@@ -27,6 +27,9 @@
     "max_lines": 500
   },
   "routing": {
-    "enabled": true
+    "enabled": true,
+    "watchdog_enabled": true,
+    "watchdog_interval": 30,
+    "watchdog_failures": 3
   }
 }

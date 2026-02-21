@@ -78,13 +78,27 @@ pub struct LogSettings {
 pub struct RoutingSettings {
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub watchdog_enabled: bool,
+    #[serde(default = "default_watchdog_interval")]
+    pub watchdog_interval: u64,
+    #[serde(default = "default_watchdog_failures")]
+    pub watchdog_failures: u32,
 }
 
 impl Default for RoutingSettings {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            watchdog_enabled: true,
+            watchdog_interval: default_watchdog_interval(),
+            watchdog_failures: default_watchdog_failures(),
+        }
     }
 }
+
+fn default_watchdog_interval() -> u64 { 30 }
+fn default_watchdog_failures() -> u32 { 3 }
 
 fn default_upstream_protocol() -> String { "http2".into() }
 fn default_vpn_mode() -> String { "general".into() }
