@@ -52,8 +52,26 @@ fn extract_server_ips(addresses: &[String]) -> Vec<String> {
         .collect()
 }
 
+fn find_ndmc() -> &'static str {
+    static PATHS: &[&str] = &["/usr/bin/ndmc", "/bin/ndmc", "/sbin/ndmc"];
+    for p in PATHS {
+        if std::path::Path::new(p).exists() {
+            return p;
+        }
+    }
+    "ndmc"
+}
+
 fn ndmc(cmd: &str) {
-    run_cmd_ok("ndmc", &["-c", cmd]);
+    let bin = find_ndmc();
+    match run_cmd(bin, &["-c", cmd]) {
+        Ok(out) => {
+            if !out.trim().is_empty() {
+                log::info!("[ndmc] {}: {}", cmd, out.trim());
+            }
+        }
+        Err(e) => log::warn!("[ndmc] '{}' failed: {}", cmd, e),
+    }
 }
 
 fn get_tun_ip_mask() -> Option<(String, String)> {
