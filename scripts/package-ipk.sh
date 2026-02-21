@@ -48,6 +48,8 @@ chmod 755 "$PKG_ROOT/opt/bin/trusttunnel-keenetic"
 if [ -f "$CLIENT_DIR/trusttunnel_client" ]; then
     cp "$CLIENT_DIR/trusttunnel_client" "$PKG_ROOT/opt/bin/"
     chmod 755 "$PKG_ROOT/opt/bin/trusttunnel_client"
+else
+    echo "WARNING: trusttunnel_client not found in $CLIENT_DIR — package will not be functional!" >&2
 fi
 if [ -f "$CLIENT_DIR/setup_wizard" ]; then
     cp "$CLIENT_DIR/setup_wizard" "$PKG_ROOT/opt/bin/"

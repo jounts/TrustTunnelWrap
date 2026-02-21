@@ -205,11 +205,15 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
     }
 
     toml.push_str("\n[listener.tun]\n");
-    if !settings.included_routes.is_empty() {
+    let included = if settings.included_routes.is_empty() && settings.vpn_mode == "general" {
+        vec!["0.0.0.0/0".to_string(), "2000::/3".to_string()]
+    } else {
+        settings.included_routes.clone()
+    };
+    if !included.is_empty() {
         toml.push_str(&format!(
             "included_routes = [{}]\n",
-            settings
-                .included_routes
+            included
                 .iter()
                 .map(|s| format!("\"{}\"", s))
                 .collect::<Vec<_>>()

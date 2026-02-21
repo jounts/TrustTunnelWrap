@@ -20,7 +20,19 @@ curl -fSL --retry 3 "$URL" -o "/tmp/${ASSET_NAME}"
 tar -xzf "/tmp/${ASSET_NAME}" -C "$OUTPUT_DIR"
 rm -f "/tmp/${ASSET_NAME}"
 
-# Ensure binaries are executable
+# Flatten: if binaries are inside a subdirectory, move them up
+for bin in trusttunnel_client setup_wizard; do
+    if [ ! -f "$OUTPUT_DIR/$bin" ]; then
+        found=$(find "$OUTPUT_DIR" -name "$bin" -type f | head -1)
+        if [ -n "$found" ]; then
+            mv "$found" "$OUTPUT_DIR/"
+        fi
+    fi
+done
+
+# Clean up leftover subdirectories
+find "$OUTPUT_DIR" -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true
+
 chmod +x "$OUTPUT_DIR"/trusttunnel_client 2>/dev/null || true
 chmod +x "$OUTPUT_DIR"/setup_wizard 2>/dev/null || true
 
