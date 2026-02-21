@@ -45,6 +45,8 @@ pub struct TunnelSettings {
     #[serde(default = "default_mtu")]
     pub mtu_size: u16,
     #[serde(default)]
+    pub anti_dpi: bool,
+    #[serde(default)]
     pub socks_address: String,
     #[serde(default = "default_reconnect_delay")]
     pub reconnect_delay: u64,
@@ -131,6 +133,7 @@ impl Default for TunnelSettings {
                 "192.168.0.0/16".into(),
             ],
             mtu_size: default_mtu(),
+            anti_dpi: false,
             socks_address: String::new(),
             reconnect_delay: default_reconnect_delay(),
             loglevel: default_loglevel(),
@@ -194,6 +197,7 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
         "killswitch_enabled = {}\n",
         settings.killswitch_enabled
     ));
+    toml.push_str(&format!("anti_dpi = {}\n", settings.anti_dpi));
 
     if !settings.dns_upstreams.is_empty() {
         toml.push_str(&format!(
