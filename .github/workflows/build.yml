@@ -73,7 +73,8 @@ jobs:
       - name: Install mipsel musl toolchain
         if: steps.target.outputs.use_cross == 'false'
         run: |
-          rustup target add mipsel-unknown-linux-musl
+          rustup toolchain install nightly --profile minimal
+          rustup +nightly component add rust-src
           wget -qO- https://musl.cc/mipsel-linux-musl-cross.tgz | sudo tar xzf - -C /usr/local/ --strip-components=1
           mipsel-linux-musl-gcc --version
 
@@ -99,7 +100,7 @@ jobs:
           if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
             cross build --release --target ${{ steps.target.outputs.triple }}
           else
-            cargo build --release --target ${{ steps.target.outputs.triple }}
+            cargo +nightly build --release --target ${{ steps.target.outputs.triple }} -Zbuild-std=std,panic_abort
           fi
           ls -lh target/${{ steps.target.outputs.triple }}/release/trusttunnel-keenetic
 
