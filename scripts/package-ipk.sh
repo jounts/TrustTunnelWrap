@@ -78,8 +78,9 @@ EOF
 # Copy install scripts
 cp package/CONTROL/postinst "$PKG_ROOT/CONTROL/"
 cp package/CONTROL/prerm "$PKG_ROOT/CONTROL/"
+cp package/CONTROL/postrm "$PKG_ROOT/CONTROL/"
 cp package/CONTROL/conffiles "$PKG_ROOT/CONTROL/"
-chmod 755 "$PKG_ROOT/CONTROL/postinst" "$PKG_ROOT/CONTROL/prerm"
+chmod 755 "$PKG_ROOT/CONTROL/postinst" "$PKG_ROOT/CONTROL/prerm" "$PKG_ROOT/CONTROL/postrm"
 
 # Build archives (Entware uses tar.gz outer format, NOT ar like standard OpenWrt)
 WORK="$(mktemp -d)"
