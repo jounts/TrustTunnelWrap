@@ -100,9 +100,8 @@ jobs:
               -v "${HOME}/.cargo/registry":/root/.cargo/registry \
               -v "${HOME}/.cargo/git":/root/.cargo/git \
               -e TRUSTTUNNEL_VERSION="${TRUSTTUNNEL_VERSION}" \
-              -e PATH="/usr/local/musl/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
               ghcr.io/rust-cross/rust-musl-cross:mipsel-musl \
-              bash -c "rustup default nightly && cargo build --release --target mipsel-unknown-linux-musl -Zbuild-std=std,panic_abort"
+              bash -c "export PATH=/usr/local/musl/bin:\$PATH && rustup default nightly && cargo build --release --target mipsel-unknown-linux-musl -Zbuild-std=std,panic_abort"
           fi
           ls -lh target/${{ steps.target.outputs.triple }}/release/trusttunnel-keenetic
 
