@@ -66,11 +66,19 @@ fn ndmc(cmd: &str) {
     let bin = find_ndmc();
     match run_cmd(bin, &["-c", cmd]) {
         Ok(out) => {
-            if !out.trim().is_empty() {
-                log::info!("[ndmc] {}: {}", cmd, out.trim());
-            }
+            let msg = if out.trim().is_empty() {
+                format!("[ndmc] ok: {}", cmd)
+            } else {
+                format!("[ndmc] {}: {}", cmd, out.trim())
+            };
+            log::info!("{}", msg);
+            crate::logs::global_buffer().push(msg);
         }
-        Err(e) => log::warn!("[ndmc] '{}' failed: {}", cmd, e),
+        Err(e) => {
+            let msg = format!("[ndmc] '{}' failed: {}", cmd, e);
+            log::warn!("{}", msg);
+            crate::logs::global_buffer().push(msg);
+        }
     }
 }
 
@@ -106,7 +114,9 @@ fn prefix_to_netmask(prefix: u8) -> String {
 }
 
 fn register_ndm_interface() {
-    log::info!("[routing] registering {} in NDM", NDM_IF_NAME);
+    let msg = format!("[routing] registering {} in NDM (ndmc={})", NDM_IF_NAME, find_ndmc());
+    log::info!("{}", msg);
+    crate::logs::global_buffer().push(msg);
 
     ndmc(&format!("interface {}", NDM_IF_NAME));
 
