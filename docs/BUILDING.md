@@ -1,0 +1,198 @@
+# Сборка и разработка
+
+## Зависимости
+
+- [Rust](https://www.rust-lang.org/tools/install) ≥ 1.75
+- [cross](https://github.com/cross-rs/cross) — для кросс-компиляции
+- Docker — требуется для `cross`
+- `tar`, `gzip`, `ar` — для сборки IPK
+- `curl` — для скачивания pre-built клиента
+
+## Быстрый старт (хост-система)
+
+```sh
+git clone https://github.com/your-org/trusttunnelwrap.git
+cd trusttunnelwrap
+cargo build
+cargo run -- --foreground --config package/etc/trusttunnel/config.json
+```
+
+## Кросс-компиляция
+
+### Установка cross
+
+```sh
+cargo install cross --git https://github.com/cross-rs/cross
+```
+
+### Поддерживаемые платформы
+
+| Архитектура роутера | Rust target triple | Пример роутеров |
+|---------------------|-------------------|-----------------|
+| aarch64 | `aarch64-unknown-linux-musl` | Keenetic Ultra, Peak, Hopper |
+| mipsel | `mipsel-unknown-linux-musl` | Keenetic Giga, Omni, City |
+| armv7 | `armv7-unknown-linux-musleabihf` | Netcraze, старые Keenetic |
+| x86_64 | `x86_64-unknown-linux-musl` | Тестирование на ПК/VM |
+
+### Сборка
+
+```sh
+# aarch64 (Keenetic Ultra, Peak)
+cross build --release --target aarch64-unknown-linux-musl
+
+# mipsel (Keenetic Giga, Omni)
+cross build --release --target mipsel-unknown-linux-musl
+
+# armv7 (Netcraze)
+cross build --release --target armv7-unknown-linux-musleabihf
+
+# x86_64 (тест на ПК)
+cross build --release --target x86_64-unknown-linux-musl
+```
+
+Бинарник будет в `target/<triple>/release/trusttunnel-keenetic`.
+
+### Скрипт build-release.sh
+
+Обёртка над `cross` с проверкой размера:
+
+```sh
+./scripts/build-release.sh aarch64-unknown-linux-musl
+```
+
+## Оптимизация размера бинарника
+
+Настройки в `Cargo.toml`:
+
+```toml
+[profile.release]
+opt-level = "z"       # Оптимизация под размер
+lto = true            # Link-time optimization
+codegen-units = 1     # Один codegen unit для лучшего LTO
+panic = "abort"       # Без unwind-таблиц
+strip = true          # Убрать символы отладки
+debug = false         # Без debug info
+```
+
+Дополнительно в `.cargo/config.toml` — GC неиспользуемых секций и статическая линковка CRT.
+
+Ожидаемый размер wrapper бинарника: 1.5–3 MB (зависит от архитектуры).
+
+## Сборка IPK-пакета
+
+### 1. Скачайте pre-built TrustTunnelClient
+
+```sh
+./scripts/download-client.sh v0.99.105 linux-aarch64 client_bin
+```
+
+Параметры:
+- Версия (тег релиза, например `v0.99.105`)
+- Архитектура клиента (`linux-aarch64`, `linux-mipsel`, `linux-armv7`, `linux-x86_64`)
+- Директория для скачивания
+
+Скрипт скачает `trusttunnel_client` и `setup_wizard`.
+
+### 2. Соберите wrapper
+
+```sh
+cross build --release --target aarch64-unknown-linux-musl
+```
+
+### 3. Соберите .ipk
+
+```sh
+./scripts/package-ipk.sh aarch64 1.0.0 \
+  target/aarch64-unknown-linux-musl/release/trusttunnel-keenetic \
+  client_bin
+```
+
+Параметры:
+1. Архитектура (для имени пакета)
+2. Версия
+3. Путь к скомпилированному wrapper бинарнику
+4. Директория с pre-built клиентом
+
+Результат: `trusttunnel-keenetic_1.0.0_aarch64.ipk`
+
+### Структура IPK
+
+```
+trusttunnel-keenetic_1.0.0_aarch64.ipk (ar-архив)
+├── debian-binary        # "2.0\n"
+├── control.tar.gz       # метаданные пакета
+│   ├── control          # имя, версия, архитектура, зависимости
+│   ├── postinst         # скрипт после установки
+│   ├── prerm            # скрипт перед удалением
+│   └── conffiles        # список конфигурационных файлов
+└── data.tar.gz          # файлы для установки
+    └── opt/
+        ├── bin/
+        │   ├── trusttunnel-keenetic    # wrapper
+        │   ├── trusttunnel_client      # VPN клиент
+        │   └── setup_wizard            # мастер настройки
+        └── etc/trusttunnel/
+            └── config.json             # конфигурация по умолчанию
+```
+
+## CI/CD (GitHub Actions)
+
+Workflow `.github/workflows/build.yml` запускается при:
+
+- **Push тега** `v*` — автоматическая сборка + релиз
+- **Ручной запуск** — вкладка Actions, можно выбрать архитектуру и версию клиента
+
+### Создание релиза
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub Actions:
+1. Скачает pre-built `trusttunnel_client` для aarch64, mipsel, armv7, x86_64
+2. Соберёт wrapper для каждой архитектуры через `cross`
+3. Пакует `.ipk`
+4. Проверяет размер (предупреждение > 10 MB)
+5. Публикует Release с файлами и SHA256SUMS
+
+## Разработка
+
+### Запуск тестов
+
+```sh
+cargo test
+```
+
+### Проверка конфигурации
+
+```sh
+cargo run -- --test --config package/etc/trusttunnel/config.json
+```
+
+### Локальный запуск (без роутера)
+
+```sh
+# Создайте тестовую конфигурацию
+cp package/etc/trusttunnel/config.json /tmp/tt-test.json
+
+# Отредактируйте порт и отключите auth для удобства
+# "auth": false
+
+cargo run -- --foreground --config /tmp/tt-test.json
+```
+
+WebUI будет доступен на `http://127.0.0.1:8080`.
+
+### Линтинг
+
+```sh
+cargo clippy --all-targets
+```
+
+### Форматирование
+
+```sh
+cargo fmt --check   # проверка
+cargo fmt           # автоформатирование
+```
