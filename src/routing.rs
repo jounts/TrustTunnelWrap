@@ -4,7 +4,6 @@ use std::time::Duration;
 const TUN_NAME: &str = "tun0";
 const OPKG_TUN_NAME: &str = "OpkgTun0";
 const NDM_IF_NAME: &str = "OpkgTun0";
-const ROUTE_METRIC: &str = "500";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -156,16 +155,8 @@ fn register_ndm_interface() {
 }
 
 fn set_ndm_default_routes() {
-    if let Some((ip, _)) = get_tun_ip_mask() {
-        ndmc(&format!("ip route default {} {}", ip, NDM_IF_NAME));
-    } else {
-        let msg = format!(
-            "[routing] could not detect {} IPv4 address, skipping NDM default IPv4 route",
-            NDM_IF_NAME
-        );
-        log::warn!("{}", msg);
-        crate::logs::global_buffer().push(msg);
-    }
+    // Shell implementation uses interface-based default route.
+    ndmc(&format!("ip route default {}", NDM_IF_NAME));
     // IPv6 default route is harmless to request even when IPv6 is disabled.
     ndmc(&format!("ipv6 route default {}", NDM_IF_NAME));
 }
@@ -181,8 +172,8 @@ fn wait_for_tun() -> bool {
     false
 }
 
-/// Configure kernel routing and firewall after the VPN client creates tun0.
-/// Renames tun0 → opkgtun0, adds default route, iptables FORWARD + MASQUERADE.
+/// Configure interface + NDM routing after the VPN client creates tun0.
+/// Renames tun0 → OpkgTun0 and sets default route via NDM.
 /// Returns the detected WAN interface name on success.
 pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     log::info!("[routing] waiting for {} ...", TUN_NAME);
@@ -221,32 +212,6 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
 
     log::info!("[routing] setting default route via {}", OPKG_TUN_NAME);
     set_ndm_default_routes();
-
-    // Keep a kernel-route fallback for environments where NDM route update lags.
-    let _ = run_cmd(
-        "ip",
-        &["route", "add", "default", "dev", OPKG_TUN_NAME, "metric", ROUTE_METRIC],
-    );
-
-    // iptables: allow forwarding LAN ↔ tunnel (br+ matches br0, br1, …)
-    log::info!("[routing] configuring iptables forwarding + NAT");
-    if let Err(e) = run_cmd(
-        "iptables",
-        &["-I", "FORWARD", "-i", "br+", "-o", OPKG_TUN_NAME, "-j", "ACCEPT"],
-    ) {
-        log::warn!("[routing] FORWARD br+→tunnel: {} (iptables installed?)", e);
-    }
-    let _ = run_cmd(
-        "iptables",
-        &[
-            "-I", "FORWARD", "-i", OPKG_TUN_NAME, "-o", "br+",
-            "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT",
-        ],
-    );
-    let _ = run_cmd(
-        "iptables",
-        &["-t", "nat", "-A", "POSTROUTING", "-o", OPKG_TUN_NAME, "-j", "MASQUERADE"],
-    );
 
     log::info!("[routing] setup complete (WAN={})", wan_if);
     crate::logs::global_buffer().push(format!("[routing] setup complete (WAN={})", wan_if));
@@ -305,38 +270,16 @@ pub fn check_connectivity(check_url: &str, timeout: Duration) -> bool {
 
 // --------------- teardown ---------------
 
-/// Remove firewall rules, routes, and the tunnel interface.
+/// Bring the tunnel link down and clear temporary server routes.
 pub fn teardown_routing(server_addresses: &[String]) {
     log::info!("[routing] tearing down ...");
-
-    run_cmd_ok(
-        "iptables",
-        &["-D", "FORWARD", "-i", "br+", "-o", OPKG_TUN_NAME, "-j", "ACCEPT"],
-    );
-    run_cmd_ok(
-        "iptables",
-        &[
-            "-D", "FORWARD", "-i", OPKG_TUN_NAME, "-o", "br+",
-            "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT",
-        ],
-    );
-    run_cmd_ok(
-        "iptables",
-        &["-t", "nat", "-D", "POSTROUTING", "-o", OPKG_TUN_NAME, "-j", "MASQUERADE"],
-    );
-
-    run_cmd_ok(
-        "ip",
-        &["route", "del", "default", "dev", OPKG_TUN_NAME, "metric", ROUTE_METRIC],
-    );
 
     for ip in extract_server_ips(server_addresses) {
         run_cmd_ok("ip", &["route", "del", &format!("{}/32", ip)]);
     }
 
-    // Keep NDM interface object persistent across restarts so GUI metadata is stable.
-    ndmc(&format!("interface {} down", NDM_IF_NAME));
-    run_cmd_ok("ip", &["link", "del", OPKG_TUN_NAME]);
+    // Shell behavior: bring interface down and recreate it on next start.
+    run_cmd_ok("ip", &["link", "set", OPKG_TUN_NAME, "down"]);
 
     log::info!("[routing] teardown complete");
     crate::logs::global_buffer().push("[routing] teardown complete".into());
