@@ -1,22 +1,23 @@
 # API Reference
 
-HTTP API wrapper-а TrustTunnel Keenetic. Сервер по умолчанию слушает на `http://0.0.0.0:8080`.
+HTTP API wrapper-а TrustTunnel Keenetic. По умолчанию сервер слушает на `http://0.0.0.0:8080`.
 
 ## Авторизация
 
-Если в конфигурации включён `webui.auth: true`, все запросы (кроме `POST /api/login` и `GET /`) должны содержать заголовок:
+- `POST /api/login` и `GET /` доступны без токена.
+- Для остальных API требуется заголовок:
 
 ```
 Authorization: <session-token>
 ```
 
-Токен сессии получается через `POST /api/login`. Сессия действует 1 час.
+Токен выдаётся через `POST /api/login`, TTL сессии — 1 час (продлевается при активности).
 
 ---
 
 ## POST /api/login
 
-Авторизация через NDM API роутера (Keenetic). Использует challenge-response с MD5 + SHA256.
+Авторизация через NDM API роутера (challenge-response).
 
 ### Тело запроса
 
@@ -32,60 +33,40 @@ Authorization: <session-token>
 | Код | Описание |
 |-----|----------|
 | 200 | Успешная авторизация |
+| 400 | Некорректный JSON или отсутствуют `login/password` |
 | 401 | Неверные учётные данные |
-| 400 | Некорректный запрос |
 
 ### Успешный ответ (200)
 
 ```json
 {
-  "token": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  "token": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+  "status": "ok"
 }
-```
-
-### Пример
-
-```sh
-curl -X POST http://192.168.1.1:8080/api/login \
-  -H "Content-Type: application/json" \
-  -d '{"login":"admin","password":"mypassword"}'
 ```
 
 ---
 
 ## GET /api/status
 
-Текущий статус туннеля.
+Текущий статус процесса `trusttunnel_client`.
 
 ### Ответ (200)
 
 ```json
 {
-  "status": "connected",
-  "pid": 12345,
-  "uptime_secs": 3600,
-  "hostname": "vpn.example.com"
+  "connected": true,
+  "uptime_seconds": 3600,
+  "last_error": "",
+  "pid": 12345
 }
-```
-
-Возможные значения `status`:
-- `stopped` — туннель не запущен
-- `connecting` — идёт подключение
-- `connected` — подключён
-- `reconnecting` — переподключение после обрыва
-- `error` — ошибка запуска
-
-### Пример
-
-```sh
-curl -H "Authorization: <token>" http://192.168.1.1:8080/api/status
 ```
 
 ---
 
 ## GET /api/config
 
-Возвращает текущие настройки туннеля из JSON-конфигурации.
+Возвращает текущий блок `tunnel` из wrapper-конфига.
 
 ### Ответ (200)
 
@@ -96,79 +77,53 @@ curl -H "Authorization: <token>" http://192.168.1.1:8080/api/status
   "username": "myuser",
   "password": "mypassword",
   "upstream_protocol": "http2",
+  "certificate": "",
+  "skip_verification": false,
   "vpn_mode": "general",
   "dns_upstreams": ["tls://1.1.1.1"],
   "killswitch_enabled": false,
   "included_routes": ["0.0.0.0/0", "2000::/3"],
   "excluded_routes": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
   "mtu_size": 1280,
+  "anti_dpi": false,
   "socks_address": "",
-  "skip_verification": false,
   "reconnect_delay": 5,
   "loglevel": "info"
 }
-```
-
-### Пример
-
-```sh
-curl -H "Authorization: <token>" http://192.168.1.1:8080/api/config
 ```
 
 ---
 
 ## POST /api/config
 
-Обновление настроек туннеля. Принимает частичное или полное обновление. Сохраняет конфигурацию на диск.
+Полностью заменяет `tunnel`-конфиг и сохраняет файл на диск.
+
+Важно: это не merge-обновление. Поля, не переданные в JSON, получат значения по умолчанию.
 
 ### Тело запроса
 
-```json
-{
-  "hostname": "new-vpn.example.com",
-  "addresses": ["5.6.7.8:443"],
-  "username": "newuser",
-  "password": "newpassword",
-  "upstream_protocol": "http3",
-  "vpn_mode": "selective",
-  "dns_upstreams": ["tls://8.8.8.8"],
-  "excluded_routes": ["10.0.0.0/8"],
-  "skip_verification": false,
-  "reconnect_delay": 10,
-  "loglevel": "debug"
-}
-```
+Передавайте полный объект `TunnelSettings` (как в ответе `GET /api/config`).
 
 ### Ответы
 
 | Код | Описание |
 |-----|----------|
-| 200 | Конфигурация сохранена |
-| 400 | Некорректный JSON |
-| 500 | Ошибка записи файла |
+| 200 | Конфигурация обновлена |
+| 400 | Некорректная структура JSON |
 
 ### Успешный ответ (200)
 
 ```json
 {
-  "ok": true
+  "status": "updated"
 }
-```
-
-### Пример
-
-```sh
-curl -X POST http://192.168.1.1:8080/api/config \
-  -H "Authorization: <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"hostname":"vpn.example.com","addresses":["1.2.3.4:443"]}'
 ```
 
 ---
 
 ## POST /api/control
 
-Управление туннелем: подключение, отключение, перезапуск.
+Управление туннелем.
 
 ### Тело запроса
 
@@ -184,100 +139,74 @@ curl -X POST http://192.168.1.1:8080/api/config \
 |--------|----------|
 | `connect` | Запуск туннеля |
 | `disconnect` | Остановка туннеля |
-| `restart` | Перезапуск (disconnect + connect) |
+| `restart` | Перезапуск |
 
 ### Ответы
 
 | Код | Описание |
 |-----|----------|
-| 200 | Действие выполнено |
-| 400 | Неизвестное действие |
-| 500 | Ошибка выполнения |
+| 200 | Действие принято |
+| 400 | Некорректный JSON, неизвестное действие или ошибка запуска |
 
-### Успешный ответ (200)
+### Успешные ответы (200)
+
+```json
+{ "status": "connecting" }
+```
+
+```json
+{ "status": "disconnected" }
+```
+
+```json
+{ "status": "restarting" }
+```
+
+### Пример ошибки (400)
 
 ```json
 {
-  "ok": true
+  "error": "Endpoint hostname and addresses are required"
 }
-```
-
-### Ошибка (500)
-
-```json
-{
-  "error": "Failed to spawn trusttunnel_client: No such file or directory"
-}
-```
-
-### Пример
-
-```sh
-# Подключить
-curl -X POST http://192.168.1.1:8080/api/control \
-  -H "Authorization: <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"action":"connect"}'
-
-# Отключить
-curl -X POST http://192.168.1.1:8080/api/control \
-  -H "Authorization: <token>" \
-  -H "Content-Type: application/json" \
-  -d '{"action":"disconnect"}'
 ```
 
 ---
 
 ## GET /api/logs
 
-Последние строки логов из кольцевого буфера.
+Возвращает последние строки логов.
 
 ### Параметры запроса
 
-| Параметр | Тип | По умолчанию | Описание |
-|----------|-----|--------------|----------|
-| `limit` | number | `100` | Количество строк |
+| Параметр | Тип | По умолчанию | Ограничение |
+|----------|-----|--------------|-------------|
+| `limit` | number | `100` | максимум `500` |
 
 ### Ответ (200)
 
 ```json
 {
   "lines": [
-    "[2025-01-15 10:30:00] INFO trusttunnel_client started (pid 12345)",
-    "[2025-01-15 10:30:01] INFO Connected to vpn.example.com:443",
-    "[2025-01-15 10:30:02] INFO TUN interface configured"
+    "[tunnel] started PID 12345",
+    "[routing] setup complete (WAN=eth0)"
   ],
-  "count": 3
+  "total": 237
 }
 ```
 
-### Пример
-
-```sh
-# Последние 50 строк
-curl -H "Authorization: <token>" "http://192.168.1.1:8080/api/logs?limit=50"
-```
+`total` — текущее количество строк во внутреннем буфере wrapper-а.
 
 ---
 
 ## GET /
 
-Возвращает встроенный HTML веб-интерфейс. Не требует авторизации (авторизация происходит внутри интерфейса через `/api/login`).
+Возвращает встроенный HTML WebUI.
 
 ---
 
-## Коды ошибок
+## Формат ошибок
 
-| Код | Описание |
-|-----|----------|
-| 200 | Успех |
-| 400 | Некорректный запрос |
-| 401 | Не авторизован или невалидный токен |
-| 404 | Маршрут не найден |
-| 405 | Метод не поддерживается |
-| 500 | Внутренняя ошибка сервера |
-
-Все ответы с ошибкой возвращают JSON:
+Типовой JSON ошибки:
 
 ```json
 {

@@ -12,7 +12,7 @@
 ## Быстрый старт (хост-система)
 
 ```sh
-git clone https://github.com/your-org/trusttunnelwrap.git
+git clone https://github.com/jounts/TrustTunnelWrap.git
 cd trusttunnelwrap
 cargo build
 cargo run -- --foreground --config package/etc/trusttunnel/config.json
@@ -39,9 +39,9 @@ cross build --release --target armv7-unknown-linux-musleabihf
 cross build --release --target x86_64-unknown-linux-musl
 ```
 
-### Сборка mipsel (без Docker)
+### Сборка mipsel (локально, без Docker)
 
-`cross` не предоставляет Docker-образ для `mipsel-unknown-linux-musl`, поэтому используется прямая компиляция с тулчейном [musl.cc](https://musl.cc):
+`cross` не предоставляет Docker-образ для `mipsel-unknown-linux-musl`, поэтому локально используется прямая компиляция с тулчейном [musl.cc](https://musl.cc):
 
 ```sh
 # Установите тулчейн (Linux)
@@ -60,6 +60,10 @@ cargo build --release --target mipsel-unknown-linux-musl
 Линкер `mipsel-linux-musl-gcc` уже настроен в `.cargo/config.toml`.
 
 Бинарник будет в `target/<triple>/release/trusttunnel-keenetic`.
+
+### Сборка mipsel в CI
+
+В GitHub Actions для `mipsel` используется контейнер `ghcr.io/rust-cross/rust-musl-cross:mipsel-musl` с nightly и флагом `-Zbuild-std=std,panic_abort`.
 
 ### Скрипт build-release.sh
 
@@ -122,19 +126,20 @@ cross build --release --target aarch64-unknown-linux-musl
 3. Путь к скомпилированному wrapper бинарнику
 4. Директория с pre-built клиентом
 
-Результат: `trusttunnel-keenetic_1.0.0_aarch64.ipk`
+Результат: `trusttunnel-keenetic_1.0.0_aarch64-3.10.ipk`
 
 ### Структура IPK
 
 Entware использует формат tar.gz (в отличие от стандартного OpenWrt, который использует ar):
 
 ```
-trusttunnel-keenetic_1.0.0_aarch64.ipk (tar.gz-архив)
+trusttunnel-keenetic_1.0.0_aarch64-3.10.ipk (tar.gz-архив)
 ├── ./debian-binary        # "2.0\n"
 ├── ./control.tar.gz       # метаданные пакета
 │   ├── control            # имя, версия, архитектура, зависимости
 │   ├── postinst           # скрипт после установки
 │   ├── prerm              # скрипт перед удалением
+│   ├── postrm             # финальная очистка
 │   └── conffiles          # список конфигурационных файлов
 └── ./data.tar.gz          # файлы для установки
     └── opt/
@@ -162,10 +167,11 @@ git push origin v1.0.0
 
 GitHub Actions:
 1. Скачает pre-built `trusttunnel_client` для aarch64, mipsel, armv7, x86_64
-2. Соберёт wrapper: `cross` для aarch64/armv7/x86_64, `cargo` + musl.cc тулчейн для mipsel
-3. Пакует `.ipk` (формат tar.gz для Entware)
-4. Проверяет размер (предупреждение > 10 MB)
-5. Публикует Release с файлами и SHA256SUMS
+2. Соберёт wrapper: `cross` для aarch64/armv7/x86_64
+3. Соберёт `mipsel` через `ghcr.io/rust-cross/rust-musl-cross:mipsel-musl` (nightly + `-Zbuild-std`)
+4. Пакует `.ipk` (формат tar.gz для Entware)
+5. Проверяет размер (предупреждение > 10 MB)
+6. Публикует Release с файлами и SHA256SUMS
 
 ## Разработка
 
@@ -187,8 +193,8 @@ cargo run -- --test --config package/etc/trusttunnel/config.json
 # Создайте тестовую конфигурацию
 cp package/etc/trusttunnel/config.json /tmp/tt-test.json
 
-# Отредактируйте порт и отключите auth для удобства
-# "auth": false
+# При необходимости укажите ndm_host вручную:
+# "webui": { "ndm_host": "192.168.1.1", "ndm_port": 80 }
 
 cargo run -- --foreground --config /tmp/tt-test.json
 ```
