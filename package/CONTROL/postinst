@@ -27,7 +27,8 @@ case "$1" in
     echo "Stopping $NAME..."
     killall $NAME 2>/dev/null || true
     killall trusttunnel_client 2>/dev/null || true
-    # Shell-like behavior: only bring tunnel links down.
+    # Shell-like behavior: bring NDM iface down, keep config object.
+    ndmc -c 'interface OpkgTun0 down' 2>/dev/null || true
     ip link set opkgtun0 down 2>/dev/null || true
     ip link set tun0 down 2>/dev/null || true
     ;;

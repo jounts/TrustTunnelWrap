@@ -27,13 +27,21 @@ fn run_cmd_ok(program: &str, args: &[&str]) {
 }
 
 pub fn current_wan_interface() -> Option<String> {
-    let out = run_cmd("ip", &["-o", "route", "show", "to", "default"]).ok()?;
+    let out = run_cmd("ip", &["-o", "route", "show", "default"]).ok()?;
     for line in out.lines() {
+        if !line.trim_start().starts_with("default ") {
+            continue;
+        }
         let parts: Vec<&str> = line.split_whitespace().collect();
         if let Some(i) = parts.iter().position(|&p| p == "dev") {
             if let Some(&dev) = parts.get(i + 1) {
-                // Skip our own tunnel — we want the real WAN
-                if dev != OPKG_TUN_NAME && dev != TUN_NAME {
+                // Skip tunnel/LAN-like devices; we only want a real upstream WAN.
+                let is_lan_like = dev == "lo"
+                    || dev.starts_with("br")
+                    || dev.starts_with("lan")
+                    || dev.starts_with("vlan")
+                    || dev.starts_with("wl");
+                if dev != OPKG_TUN_NAME && dev != TUN_NAME && !is_lan_like {
                     return Some(dev.to_string());
                 }
             }
