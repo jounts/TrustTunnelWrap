@@ -1,5 +1,4 @@
 use std::process::Command;
-use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 const TUN_NAME: &str = "tun0";
@@ -8,9 +7,6 @@ const NDM_IF_NAME: &str = "OpkgTun0";
 const ROUTE_METRIC: &str = "500";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const CONNECTIVITY_ROUTE_PROBE_IP: &str = "1.1.1.1";
-const CONNECTIVITY_TCP_TIMEOUT: Duration = Duration::from_secs(5);
-const CONNECTIVITY_TCP_PROBES: &[(&str, u16)] = &[("1.1.1.1", 443), ("8.8.8.8", 53)];
 
 fn run_cmd(program: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
@@ -279,29 +275,32 @@ pub fn is_tun_alive() -> bool {
     std::path::Path::new(&format!("/sys/class/net/{}", OPKG_TUN_NAME)).exists()
 }
 
-fn route_uses_tunnel(ip: &str) -> bool {
-    let out = match run_cmd("ip", &["route", "get", ip]) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    out.contains(&format!("dev {}", OPKG_TUN_NAME))
-}
+pub fn check_connectivity(check_url: &str, timeout: Duration) -> bool {
+    let timeout_secs = timeout.as_secs().max(1);
+    let connect_timeout = timeout_secs.to_string();
+    let max_time = (timeout_secs + 2).to_string();
 
-fn tcp_probe(ip: &str, port: u16) -> bool {
-    let addr: SocketAddr = match format!("{}:{}", ip, port).parse() {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    TcpStream::connect_timeout(&addr, CONNECTIVITY_TCP_TIMEOUT).is_ok()
-}
+    let args_owned = vec![
+        "--interface".to_string(),
+        OPKG_TUN_NAME.to_string(),
+        "--connect-timeout".to_string(),
+        connect_timeout,
+        "--max-time".to_string(),
+        max_time,
+        "-fsS".to_string(),
+        "-o".to_string(),
+        "/dev/null".to_string(),
+        check_url.to_string(),
+    ];
+    let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
 
-pub fn check_connectivity() -> bool {
-    if !route_uses_tunnel(CONNECTIVITY_ROUTE_PROBE_IP) {
-        return false;
+    match run_cmd("curl", &args) {
+        Ok(_) => true,
+        Err(e) => {
+            log::debug!("[routing] connectivity probe failed: {}", e);
+            false
+        }
     }
-    CONNECTIVITY_TCP_PROBES
-        .iter()
-        .any(|(ip, port)| tcp_probe(ip, *port))
 }
 
 // --------------- teardown ---------------

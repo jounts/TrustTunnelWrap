@@ -98,6 +98,10 @@ pub struct RoutingSettings {
     pub watchdog_interval: u64,
     #[serde(default = "default_watchdog_failures")]
     pub watchdog_failures: u32,
+    #[serde(default = "default_watchdog_check_url")]
+    pub watchdog_check_url: String,
+    #[serde(default = "default_watchdog_check_timeout")]
+    pub watchdog_check_timeout: u64,
 }
 
 impl Default for RoutingSettings {
@@ -107,12 +111,18 @@ impl Default for RoutingSettings {
             watchdog_enabled: true,
             watchdog_interval: default_watchdog_interval(),
             watchdog_failures: default_watchdog_failures(),
+            watchdog_check_url: default_watchdog_check_url(),
+            watchdog_check_timeout: default_watchdog_check_timeout(),
         }
     }
 }
 
 fn default_watchdog_interval() -> u64 { 30 }
 fn default_watchdog_failures() -> u32 { 3 }
+fn default_watchdog_check_url() -> String {
+    "http://connectivitycheck.gstatic.com/generate_204".into()
+}
+fn default_watchdog_check_timeout() -> u64 { 5 }
 
 fn default_upstream_protocol() -> String { "http2".into() }
 fn default_vpn_mode() -> String { "general".into() }

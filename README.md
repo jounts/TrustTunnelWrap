@@ -107,7 +107,9 @@ opkg install /tmp/trusttunnel.ipk
     "enabled": true,
     "watchdog_enabled": true,
     "watchdog_interval": 30,
-    "watchdog_failures": 3
+    "watchdog_failures": 3,
+    "watchdog_check_url": "http://connectivitycheck.gstatic.com/generate_204",
+    "watchdog_check_timeout": 5
   }
 }
 ```
@@ -247,6 +249,8 @@ Wrapper управляет бинарником `trusttunnel_client` как до
 | `watchdog_enabled` | bool | `true` | Включить watchdog проверки туннеля |
 | `watchdog_interval` | number | `30` | Интервал watchdog-проверок (секунды) |
 | `watchdog_failures` | number | `3` | Порог неудачных проверок до рестарта |
+| `watchdog_check_url` | string | `"http://connectivitycheck.gstatic.com/generate_204"` | URL для HTTP health-check через `OpkgTun0` |
+| `watchdog_check_timeout` | number | `5` | Таймаут проверки связности (секунды) |
 
 ## API
 

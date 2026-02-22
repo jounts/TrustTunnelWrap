@@ -35,6 +35,8 @@
     "enabled": true,
     "watchdog_enabled": true,
     "watchdog_interval": 30,
-    "watchdog_failures": 3
+    "watchdog_failures": 3,
+    "watchdog_check_url": "http://connectivitycheck.gstatic.com/generate_204",
+    "watchdog_check_timeout": 5
   }
 }
