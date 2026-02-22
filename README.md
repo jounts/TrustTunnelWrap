@@ -97,13 +97,19 @@ opkg install /tmp/trusttunnel.ipk
   },
   "logging": {
     "level": "info",
-    "max_lines": 500
+    "max_lines": 500,
+    "file_enabled": true,
+    "file_path": "/var/log/trusttunnel-keenetic/trusttunnel-keenetic.log",
+    "rotate_size": "512KB",
+    "rotate_keep": 1
   },
   "routing": {
     "enabled": true,
     "watchdog_enabled": true,
     "watchdog_interval": 30,
-    "watchdog_failures": 3
+    "watchdog_failures": 3,
+    "watchdog_check_url": "http://connectivitycheck.gstatic.com/generate_204",
+    "watchdog_check_timeout": 5
   }
 }
 ```
@@ -151,11 +157,14 @@ opkg install /tmp/trusttunnel.ipk
 ### Просмотр логов
 
 ```sh
-# Через syslog
-logread | grep trusttunnel
-
-# Через API
+# Через API (внутренний буфер + доступные системные источники)
 curl -H "Authorization: <token>" http://127.0.0.1:8080/api/logs
+
+# Через файл логов
+tail -f /var/log/trusttunnel-keenetic/trusttunnel-keenetic.log
+
+# Просмотр архивов ротации
+ls -lh /var/log/trusttunnel-keenetic/
 ```
 
 ## Архитектура
@@ -227,6 +236,10 @@ Wrapper управляет бинарником `trusttunnel_client` как до
 |---|---|---|---|
 | `level` | string | `"info"` | Уровень логирования wrapper |
 | `max_lines` | number | `500` | Размер кольцевого буфера логов |
+| `file_enabled` | bool | `true` | Включить запись логов wrapper в файл |
+| `file_path` | string | `"/var/log/trusttunnel-keenetic/trusttunnel-keenetic.log"` | Путь к основному лог-файлу |
+| `rotate_size` | string\|number | `"512KB"` | Порог ротации: байты (`1048576`) или с суффиксом (`512KB`, `10MB`, `1GB`) |
+| `rotate_keep` | number | `1` | Количество архивов ротации (`.1`, `.2`, ... ) |
 
 ### Параметры маршрутизации (`routing`)
 
@@ -236,6 +249,8 @@ Wrapper управляет бинарником `trusttunnel_client` как до
 | `watchdog_enabled` | bool | `true` | Включить watchdog проверки туннеля |
 | `watchdog_interval` | number | `30` | Интервал watchdog-проверок (секунды) |
 | `watchdog_failures` | number | `3` | Порог неудачных проверок до рестарта |
+| `watchdog_check_url` | string | `"http://connectivitycheck.gstatic.com/generate_204"` | URL для HTTP health-check через `OpkgTun0` |
+| `watchdog_check_timeout` | number | `5` | Таймаут проверки связности (секунды) |
 
 ## API
 

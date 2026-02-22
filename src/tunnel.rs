@@ -30,6 +30,8 @@ pub struct TunnelManager {
     watchdog_enabled: bool,
     watchdog_interval: Duration,
     watchdog_max_failures: u32,
+    watchdog_check_url: String,
+    watchdog_check_timeout: Duration,
     watchdog_failures: AtomicU32,
     last_watchdog_check: Mutex<Instant>,
     last_wan_interface: Arc<Mutex<String>>,
@@ -52,6 +54,8 @@ impl TunnelManager {
             watchdog_enabled: routing.watchdog_enabled,
             watchdog_interval: Duration::from_secs(routing.watchdog_interval),
             watchdog_max_failures: routing.watchdog_failures,
+            watchdog_check_url: routing.watchdog_check_url.clone(),
+            watchdog_check_timeout: Duration::from_secs(routing.watchdog_check_timeout),
             watchdog_failures: AtomicU32::new(0),
             last_watchdog_check: Mutex::new(Instant::now()),
             last_wan_interface: Arc::new(Mutex::new(String::new())),
@@ -276,7 +280,7 @@ impl TunnelManager {
             }
         }
 
-        if !routing::check_connectivity() {
+        if !routing::check_connectivity(&self.watchdog_check_url, self.watchdog_check_timeout) {
             let fails = self.watchdog_failures.fetch_add(1, Ordering::SeqCst) + 1;
             log::warn!(
                 "[watchdog] connectivity check failed ({}/{})",

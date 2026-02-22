@@ -1,3 +1,4 @@
+use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -74,6 +75,17 @@ pub struct LogSettings {
     pub level: String,
     #[serde(default = "default_max_lines")]
     pub max_lines: usize,
+    #[serde(default = "default_file_enabled")]
+    pub file_enabled: bool,
+    #[serde(default = "default_log_file_path")]
+    pub file_path: String,
+    #[serde(
+        default = "default_rotate_size_bytes",
+        deserialize_with = "deserialize_rotate_size"
+    )]
+    pub rotate_size: u64,
+    #[serde(default = "default_rotate_keep")]
+    pub rotate_keep: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -86,6 +98,10 @@ pub struct RoutingSettings {
     pub watchdog_interval: u64,
     #[serde(default = "default_watchdog_failures")]
     pub watchdog_failures: u32,
+    #[serde(default = "default_watchdog_check_url")]
+    pub watchdog_check_url: String,
+    #[serde(default = "default_watchdog_check_timeout")]
+    pub watchdog_check_timeout: u64,
 }
 
 impl Default for RoutingSettings {
@@ -95,12 +111,18 @@ impl Default for RoutingSettings {
             watchdog_enabled: true,
             watchdog_interval: default_watchdog_interval(),
             watchdog_failures: default_watchdog_failures(),
+            watchdog_check_url: default_watchdog_check_url(),
+            watchdog_check_timeout: default_watchdog_check_timeout(),
         }
     }
 }
 
 fn default_watchdog_interval() -> u64 { 30 }
 fn default_watchdog_failures() -> u32 { 3 }
+fn default_watchdog_check_url() -> String {
+    "http://connectivitycheck.gstatic.com/generate_204".into()
+}
+fn default_watchdog_check_timeout() -> u64 { 5 }
 
 fn default_upstream_protocol() -> String { "http2".into() }
 fn default_vpn_mode() -> String { "general".into() }
@@ -112,6 +134,68 @@ fn default_bind() -> String { "0.0.0.0".into() }
 fn default_true() -> bool { true }
 fn default_max_lines() -> usize { 500 }
 fn default_ndm_port() -> u16 { 80 }
+fn default_file_enabled() -> bool { true }
+fn default_log_file_path() -> String {
+    "/var/log/trusttunnel-keenetic/trusttunnel-keenetic.log".into()
+}
+fn default_rotate_size_bytes() -> u64 { 512 * 1024 }
+fn default_rotate_keep() -> usize { 1 }
+
+fn parse_size_with_units(value: &str) -> Option<u64> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(bytes) = trimmed.parse::<u64>() {
+        return Some(bytes);
+    }
+
+    let upper = trimmed.to_ascii_uppercase();
+    let mut digits_end = 0usize;
+    for (idx, ch) in upper.char_indices() {
+        if ch.is_ascii_digit() {
+            digits_end = idx + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if digits_end == 0 {
+        return None;
+    }
+
+    let number = upper[..digits_end].parse::<u64>().ok()?;
+    let suffix = upper[digits_end..].trim();
+    let multiplier = match suffix {
+        "K" | "KB" => 1024u64,
+        "M" | "MB" => 1024u64 * 1024,
+        "G" | "GB" => 1024u64 * 1024 * 1024,
+        "B" | "" => 1u64,
+        _ => return None,
+    };
+    number.checked_mul(multiplier)
+}
+
+fn deserialize_rotate_size<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum RotateSize {
+        Number(u64),
+        Text(String),
+    }
+
+    match RotateSize::deserialize(deserializer)? {
+        RotateSize::Number(v) => Ok(v),
+        RotateSize::Text(s) => parse_size_with_units(&s).ok_or_else(|| {
+            de::Error::custom(format!(
+                "invalid rotate_size '{}', use bytes (1048576) or units (512KB, 10MB, 1GB)",
+                s
+            ))
+        }),
+    }
+}
 
 impl Default for TunnelSettings {
     fn default() -> Self {
@@ -158,6 +242,10 @@ impl Default for LogSettings {
         Self {
             level: default_loglevel(),
             max_lines: default_max_lines(),
+            file_enabled: default_file_enabled(),
+            file_path: default_log_file_path(),
+            rotate_size: default_rotate_size_bytes(),
+            rotate_keep: default_rotate_keep(),
         }
     }
 }
@@ -237,6 +325,8 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
     }
 
     toml.push_str("\n[listener.tun]\n");
+    toml.push_str("bound_if = \"\"\n");
+    toml.push_str("change_system_dns = false\n");
     let included = if settings.included_routes.is_empty() && settings.vpn_mode == "general" {
         vec!["0.0.0.0/0".to_string(), "2000::/3".to_string()]
     } else {
@@ -291,5 +381,15 @@ mod tests {
         assert!(toml.contains("hostname = \"vpn.example.com\""));
         assert!(toml.contains("username = \"user\""));
         assert!(toml.contains("[listener.tun]"));
+    }
+
+    #[test]
+    fn test_parse_size_with_units() {
+        assert_eq!(parse_size_with_units("1048576"), Some(1_048_576));
+        assert_eq!(parse_size_with_units("512KB"), Some(512 * 1024));
+        assert_eq!(parse_size_with_units("10mb"), Some(10 * 1024 * 1024));
+        assert_eq!(parse_size_with_units("1 G"), Some(1024 * 1024 * 1024));
+        assert_eq!(parse_size_with_units(""), None);
+        assert_eq!(parse_size_with_units("oops"), None);
     }
 }

@@ -91,13 +91,54 @@ backup_existing_config() {
   fi
 }
 
+ensure_jq() {
+  if command -v jq >/dev/null 2>&1; then
+    return 0
+  fi
+  log "jq not found, trying to install it for config merge..."
+  opkg update >/dev/null 2>&1 || true
+  opkg install jq >/dev/null 2>&1 || true
+  command -v jq >/dev/null 2>&1
+}
+
 restore_config_if_needed() {
-  if [ -n "${BACKUP_PATH}" ] && [ -f "$BACKUP_PATH" ]; then
-    mkdir -p "/opt/etc/trusttunnel"
+  if [ -z "${BACKUP_PATH}" ] || [ ! -f "$BACKUP_PATH" ]; then
+    return 0
+  fi
+
+  mkdir -p "/opt/etc/trusttunnel"
+
+  # If package did not create config for some reason, restore backup directly.
+  if [ ! -f "$CONFIG_PATH" ]; then
     cp "$BACKUP_PATH" "$CONFIG_PATH"
     chmod 600 "$CONFIG_PATH" 2>/dev/null || true
-    log "Config restored to: $CONFIG_PATH"
+    log "Config restored from backup (no new template found): $CONFIG_PATH"
+    return 0
   fi
+
+  # Preserve new directives: merge NEW config with OLD values.
+  # jq expression `.[0] * .[1]` keeps keys from new template and overrides
+  # existing ones with user values from backup.
+  if ensure_jq; then
+    merged="/tmp/${PKG_NAME}-config-merged.json"
+    if jq -s '.[0] * .[1]' "$CONFIG_PATH" "$BACKUP_PATH" > "$merged"; then
+      cp "$merged" "$CONFIG_PATH"
+      rm -f "$merged"
+      chmod 600 "$CONFIG_PATH" 2>/dev/null || true
+      log "Config merged with backup (new directives preserved): $CONFIG_PATH"
+      return 0
+    fi
+    log "WARNING: jq merge failed, keeping new config. Backup saved at: $BACKUP_PATH"
+    return 0
+  fi
+
+  # Without jq we cannot safely merge JSON in POSIX sh.
+  # Restore backup so user settings are not lost.
+  cp "$BACKUP_PATH" "$CONFIG_PATH"
+  chmod 600 "$CONFIG_PATH" 2>/dev/null || true
+  log "WARNING: jq is unavailable, restored previous config as-is: $CONFIG_PATH"
+  log "WARNING: new directives from template may be missing; merge manually if needed."
+  log "WARNING: previous config backup kept at: $BACKUP_PATH"
 }
 
 main() {
@@ -113,9 +154,10 @@ main() {
   log "Downloading package to $TMP_IPK ..."
   download_file "$asset_url" "$TMP_IPK"
 
+  backup_existing_config
+
   if opkg list-installed 2>/dev/null | grep -q "^${PKG_NAME}[[:space:]]"; then
-    log "Existing installation found, creating backup and removing old package..."
-    backup_existing_config
+    log "Existing installation found, removing old package..."
     opkg remove "$PKG_NAME"
   else
     log "No previous installation found"

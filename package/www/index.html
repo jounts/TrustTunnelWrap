@@ -62,12 +62,21 @@ footer{text-align:center;padding:1rem;color:var(--muted);font-size:.82rem}
 <div class="fg"><label for="tt-password">Пароль endpoint</label><input id="tt-password" type="password"></div>
 <div class="fg"><label for="protocol">Протокол</label>
 <select id="protocol"><option value="http2">HTTP/2</option><option value="http3">HTTP/3 (QUIC)</option></select></div>
+<div class="fg"><label for="certificate">Сертификат (PEM, опционально)</label><textarea id="certificate" rows="3" placeholder="-----BEGIN CERTIFICATE----- ..."></textarea></div>
 <div class="fg"><label for="vpn-mode">Режим VPN</label>
 <select id="vpn-mode"><option value="general">Весь трафик</option><option value="selective">Выборочный</option></select></div>
 <div class="fg"><label for="dns">DNS (через запятую)</label><input id="dns" placeholder="tls://1.1.1.1"></div>
+<div class="fg"><label for="incl-routes">Включённые маршруты</label>
+<textarea id="incl-routes" rows="2" placeholder="0.0.0.0/0, 2000::/3"></textarea></div>
 <div class="fg"><label for="excl-routes">Исключённые маршруты</label>
 <textarea id="excl-routes" rows="2" placeholder="10.0.0.0/8, 192.168.0.0/16"></textarea></div>
+<div class="fg"><label for="mtu-size">MTU</label><input id="mtu-size" type="number" min="576" max="9000" step="1" placeholder="1280"></div>
+<div class="fg"><label for="socks-address">SOCKS address (опционально)</label><input id="socks-address" placeholder="127.0.0.1:1080"></div>
+<div class="fg"><label for="reconnect-delay">Задержка переподключения (сек)</label><input id="reconnect-delay" type="number" min="1" max="3600" step="1" placeholder="5"></div>
+<div class="fg"><label for="loglevel">Уровень логирования</label>
+<select id="loglevel"><option value="error">error</option><option value="warn">warn</option><option value="info">info</option><option value="debug">debug</option><option value="trace">trace</option></select></div>
 <div class="fg"><label><input type="checkbox" id="anti-dpi"> Anti-DPI (обход блокировок)</label></div>
+<div class="fg"><label><input type="checkbox" id="killswitch-enabled"> Killswitch</label></div>
 <div class="fg"><label><input type="checkbox" id="skip-verify"> Пропуск проверки сертификата</label></div>
 <div id="cfg-msg"></div>
 <div class="flex">
@@ -140,11 +149,18 @@ async function loadCfg(){
     document.getElementById('username').value=c.username||'';
     document.getElementById('tt-password').value=c.password||'';
     document.getElementById('protocol').value=c.upstream_protocol||'http2';
+    document.getElementById('certificate').value=c.certificate||'';
     document.getElementById('vpn-mode').value=c.vpn_mode||'general';
     document.getElementById('dns').value=(c.dns_upstreams||[]).join(', ');
+    document.getElementById('incl-routes').value=(c.included_routes||[]).join(', ');
     document.getElementById('excl-routes').value=(c.excluded_routes||[]).join(', ');
+    document.getElementById('mtu-size').value=c.mtu_size||1280;
+    document.getElementById('socks-address').value=c.socks_address||'';
+    document.getElementById('reconnect-delay').value=c.reconnect_delay||5;
+    document.getElementById('loglevel').value=c.loglevel||'info';
     document.getElementById('skip-verify').checked=!!c.skip_verification;
     document.getElementById('anti-dpi').checked=!!c.anti_dpi;
+    document.getElementById('killswitch-enabled').checked=!!c.killswitch_enabled;
   }catch(e){}
 }
 
@@ -156,11 +172,18 @@ async function saveConfig(){
     username:document.getElementById('username').value.trim(),
     password:document.getElementById('tt-password').value,
     upstream_protocol:document.getElementById('protocol').value,
+    certificate:document.getElementById('certificate').value.trim(),
     vpn_mode:document.getElementById('vpn-mode').value,
     dns_upstreams:document.getElementById('dns').value.split(',').map(s=>s.trim()).filter(Boolean),
+    included_routes:document.getElementById('incl-routes').value.split(',').map(s=>s.trim()).filter(Boolean),
     excluded_routes:document.getElementById('excl-routes').value.split(',').map(s=>s.trim()).filter(Boolean),
+    mtu_size:Math.max(576,parseInt(document.getElementById('mtu-size').value||'1280',10)||1280),
+    socks_address:document.getElementById('socks-address').value.trim(),
+    reconnect_delay:Math.max(1,parseInt(document.getElementById('reconnect-delay').value||'5',10)||5),
+    loglevel:document.getElementById('loglevel').value,
     skip_verification:document.getElementById('skip-verify').checked,
-    anti_dpi:document.getElementById('anti-dpi').checked
+    anti_dpi:document.getElementById('anti-dpi').checked,
+    killswitch_enabled:document.getElementById('killswitch-enabled').checked
   };
   if(!cfg.hostname||!cfg.addresses.length){m.textContent='Hostname и адреса обязательны';m.className='err';return}
   try{await api('/config','POST',cfg);m.textContent='Конфигурация сохранена';m.className='ok'}

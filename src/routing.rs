@@ -2,9 +2,8 @@ use std::process::Command;
 use std::time::Duration;
 
 const TUN_NAME: &str = "tun0";
-const OPKG_TUN_NAME: &str = "OpkgTun0";
+const OPKG_TUN_NAME: &str = "opkgtun0";
 const NDM_IF_NAME: &str = "OpkgTun0";
-const ROUTE_METRIC: &str = "500";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
 
@@ -28,13 +27,21 @@ fn run_cmd_ok(program: &str, args: &[&str]) {
 }
 
 pub fn current_wan_interface() -> Option<String> {
-    let out = run_cmd("ip", &["-o", "route", "show", "to", "default"]).ok()?;
+    let out = run_cmd("ip", &["-o", "route", "show", "default"]).ok()?;
     for line in out.lines() {
+        if !line.trim_start().starts_with("default ") {
+            continue;
+        }
         let parts: Vec<&str> = line.split_whitespace().collect();
         if let Some(i) = parts.iter().position(|&p| p == "dev") {
             if let Some(&dev) = parts.get(i + 1) {
-                // Skip our own tunnel — we want the real WAN
-                if dev != OPKG_TUN_NAME && dev != TUN_NAME {
+                // Skip tunnel/LAN-like devices; we only want a real upstream WAN.
+                let is_lan_like = dev == "lo"
+                    || dev.starts_with("br")
+                    || dev.starts_with("lan")
+                    || dev.starts_with("vlan")
+                    || dev.starts_with("wl");
+                if dev != OPKG_TUN_NAME && dev != TUN_NAME && !is_lan_like {
                     return Some(dev.to_string());
                 }
             }
@@ -113,6 +120,13 @@ fn get_tun_ip_mask() -> Option<(String, String)> {
     None
 }
 
+fn get_tun_mtu() -> Option<u16> {
+    let out = run_cmd("ip", &["-o", "link", "show", OPKG_TUN_NAME]).ok()?;
+    let parts: Vec<&str> = out.split_whitespace().collect();
+    let idx = parts.iter().position(|&p| p == "mtu")?;
+    parts.get(idx + 1)?.parse::<u16>().ok()
+}
+
 fn prefix_to_netmask(prefix: u8) -> String {
     let bits: u32 = if prefix >= 32 {
         0xFFFF_FFFF
@@ -129,7 +143,7 @@ fn prefix_to_netmask(prefix: u8) -> String {
 }
 
 fn register_ndm_interface() {
-    let msg = format!("[routing] registering {} in NDM (ndmc={})", NDM_IF_NAME, find_ndmc());
+    let msg = format!("[routing] ensuring {} in NDM (ndmc={})", NDM_IF_NAME, find_ndmc());
     log::info!("{}", msg);
     crate::logs::global_buffer().push(msg);
 
@@ -138,19 +152,21 @@ fn register_ndm_interface() {
     if let Some((ip, mask)) = get_tun_ip_mask() {
         ndmc(&format!("interface {} ip address {} {}", NDM_IF_NAME, ip, mask));
     }
+    if let Some(mtu) = get_tun_mtu() {
+        ndmc(&format!("interface {} ip mtu {}", NDM_IF_NAME, mtu));
+    }
 
     ndmc(&format!("interface {} ip global auto", NDM_IF_NAME));
+    ndmc(&format!("interface {} ip tcp adjust-mss pmtu", NDM_IF_NAME));
     ndmc(&format!("interface {} security-level public", NDM_IF_NAME));
     ndmc(&format!("interface {} up", NDM_IF_NAME));
 }
 
-fn unregister_ndm_interface() {
-    let msg = format!("[routing] removing {} from NDM", NDM_IF_NAME);
-    log::info!("{}", msg);
-    crate::logs::global_buffer().push(msg);
-
-    ndmc(&format!("interface {} down", NDM_IF_NAME));
-    ndmc(&format!("no interface {}", NDM_IF_NAME));
+fn set_ndm_default_routes() {
+    // Shell implementation uses interface-based default route.
+    ndmc(&format!("ip route default {}", NDM_IF_NAME));
+    // IPv6 default route is harmless to request even when IPv6 is disabled.
+    ndmc(&format!("ipv6 route default {}", NDM_IF_NAME));
 }
 
 fn wait_for_tun() -> bool {
@@ -164,8 +180,8 @@ fn wait_for_tun() -> bool {
     false
 }
 
-/// Configure kernel routing and firewall after the VPN client creates tun0.
-/// Renames tun0 → opkgtun0, adds default route, iptables FORWARD + MASQUERADE.
+/// Configure interface + NDM routing after the VPN client creates tun0.
+/// Renames tun0 → opkgtun0 and sets default route via NDM.
 /// Returns the detected WAN interface name on success.
 pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     log::info!("[routing] waiting for {} ...", TUN_NAME);
@@ -202,35 +218,8 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
         }
     }
 
-    log::info!(
-        "[routing] default route via {} metric {}",
-        OPKG_TUN_NAME,
-        ROUTE_METRIC
-    );
-    let _ = run_cmd(
-        "ip",
-        &["route", "add", "default", "dev", OPKG_TUN_NAME, "metric", ROUTE_METRIC],
-    );
-
-    // iptables: allow forwarding LAN ↔ tunnel (br+ matches br0, br1, …)
-    log::info!("[routing] configuring iptables forwarding + NAT");
-    if let Err(e) = run_cmd(
-        "iptables",
-        &["-I", "FORWARD", "-i", "br+", "-o", OPKG_TUN_NAME, "-j", "ACCEPT"],
-    ) {
-        log::warn!("[routing] FORWARD br+→tunnel: {} (iptables installed?)", e);
-    }
-    let _ = run_cmd(
-        "iptables",
-        &[
-            "-I", "FORWARD", "-i", OPKG_TUN_NAME, "-o", "br+",
-            "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT",
-        ],
-    );
-    let _ = run_cmd(
-        "iptables",
-        &["-t", "nat", "-A", "POSTROUTING", "-o", OPKG_TUN_NAME, "-j", "MASQUERADE"],
-    );
+    log::info!("[routing] setting default route via {}", OPKG_TUN_NAME);
+    set_ndm_default_routes();
 
     log::info!("[routing] setup complete (WAN={})", wan_if);
     crate::logs::global_buffer().push(format!("[routing] setup complete (WAN={})", wan_if));
@@ -259,48 +248,46 @@ pub fn is_tun_alive() -> bool {
     std::path::Path::new(&format!("/sys/class/net/{}", OPKG_TUN_NAME)).exists()
 }
 
-pub fn check_connectivity() -> bool {
-    // Single ICMP ping through the tunnel interface, 5s timeout
-    run_cmd(
-        "ping",
-        &["-c1", "-W5", "-I", OPKG_TUN_NAME, "1.1.1.1"],
-    )
-    .is_ok()
+pub fn check_connectivity(check_url: &str, timeout: Duration) -> bool {
+    let timeout_secs = timeout.as_secs().max(1);
+    let connect_timeout = timeout_secs.to_string();
+    let max_time = (timeout_secs + 2).to_string();
+
+    let args_owned = vec![
+        "--interface".to_string(),
+        OPKG_TUN_NAME.to_string(),
+        "--connect-timeout".to_string(),
+        connect_timeout,
+        "--max-time".to_string(),
+        max_time,
+        "-fsS".to_string(),
+        "-o".to_string(),
+        "/dev/null".to_string(),
+        check_url.to_string(),
+    ];
+    let args: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+
+    match run_cmd("curl", &args) {
+        Ok(_) => true,
+        Err(e) => {
+            log::debug!("[routing] connectivity probe failed: {}", e);
+            false
+        }
+    }
 }
 
 // --------------- teardown ---------------
 
-/// Remove firewall rules, routes, and the tunnel interface.
+/// Bring the tunnel link down and clear temporary server routes.
 pub fn teardown_routing(server_addresses: &[String]) {
     log::info!("[routing] tearing down ...");
-
-    run_cmd_ok(
-        "iptables",
-        &["-D", "FORWARD", "-i", "br+", "-o", OPKG_TUN_NAME, "-j", "ACCEPT"],
-    );
-    run_cmd_ok(
-        "iptables",
-        &[
-            "-D", "FORWARD", "-i", OPKG_TUN_NAME, "-o", "br+",
-            "-m", "state", "--state", "RELATED,ESTABLISHED", "-j", "ACCEPT",
-        ],
-    );
-    run_cmd_ok(
-        "iptables",
-        &["-t", "nat", "-D", "POSTROUTING", "-o", OPKG_TUN_NAME, "-j", "MASQUERADE"],
-    );
-
-    run_cmd_ok(
-        "ip",
-        &["route", "del", "default", "dev", OPKG_TUN_NAME, "metric", ROUTE_METRIC],
-    );
 
     for ip in extract_server_ips(server_addresses) {
         run_cmd_ok("ip", &["route", "del", &format!("{}/32", ip)]);
     }
 
-    unregister_ndm_interface();
-    run_cmd_ok("ip", &["link", "del", OPKG_TUN_NAME]);
+    // Shell behavior: bring interface down and recreate it on next start.
+    run_cmd_ok("ip", &["link", "set", OPKG_TUN_NAME, "down"]);
 
     log::info!("[routing] teardown complete");
     crate::logs::global_buffer().push("[routing] teardown complete".into());

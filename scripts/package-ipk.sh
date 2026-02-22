@@ -71,7 +71,7 @@ Priority: optional
 Description: TrustTunnel VPN wrapper for Keenetic/Netcraze routers
  Includes web management interface, NDM API auth, and auto-reconnect.
 Homepage: https://github.com/jounts/TrustTunnelWrap
-Depends: libc, iptables
+Depends: libc, iptables, jq
 Installed-Size: ${INSTALLED_SIZE}
 EOF
 

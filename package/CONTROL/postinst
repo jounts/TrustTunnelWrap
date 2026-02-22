@@ -8,8 +8,8 @@ chmod 755 "$BIN_DIR/trusttunnel-keenetic" 2>/dev/null || true
 chmod 755 "$BIN_DIR/trusttunnel_client" 2>/dev/null || true
 chmod 755 "$BIN_DIR/setup_wizard" 2>/dev/null || true
 
-# Create init script if init.d exists
-if [ -d /opt/etc/init.d ] && [ ! -f /opt/etc/init.d/S50trusttunnel ]; then
+# Create/update init script if init.d exists
+if [ -d /opt/etc/init.d ]; then
     cat > /opt/etc/init.d/S50trusttunnel << 'INITEOF'
 #!/bin/sh
 NAME=trusttunnel-keenetic
@@ -27,14 +27,10 @@ case "$1" in
     echo "Stopping $NAME..."
     killall $NAME 2>/dev/null || true
     killall trusttunnel_client 2>/dev/null || true
-    # Clean up routing (in case wrapper did not teardown gracefully)
-    iptables -D FORWARD -i br+ -o OpkgTun0 -j ACCEPT 2>/dev/null || true
-    iptables -D FORWARD -i OpkgTun0 -o br+ -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
-    iptables -t nat -D POSTROUTING -o OpkgTun0 -j MASQUERADE 2>/dev/null || true
-    ip route del default dev OpkgTun0 2>/dev/null || true
+    # Shell-like behavior: bring NDM iface down, keep config object.
     ndmc -c 'interface OpkgTun0 down' 2>/dev/null || true
-    ndmc -c 'no interface OpkgTun0' 2>/dev/null || true
-    ip link del OpkgTun0 2>/dev/null || true
+    ip link set opkgtun0 down 2>/dev/null || true
+    ip link set tun0 down 2>/dev/null || true
     ;;
   restart)
     $0 stop
