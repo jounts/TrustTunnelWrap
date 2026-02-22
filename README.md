@@ -23,11 +23,11 @@ IPK-пакет для запуска [TrustTunnel VPN](https://github.com/TrustT
 
 ```sh
 # Скопируйте пакет на роутер
-scp trusttunnel-keenetic_1.0.0_aarch64.ipk root@192.168.1.1:/tmp/
+scp -O trusttunnel-keenetic_1.0.0_aarch64-3.10.ipk root@192.168.1.1:/tmp/trusttunnel.ipk
 
 # Установите
 ssh root@192.168.1.1
-opkg install /tmp/trusttunnel-keenetic_1.0.0_aarch64.ipk
+opkg install /tmp/trusttunnel.ipk
 ```
 
 После установки пакет выведет адрес веб-интерфейса и инструкции по запуску.
@@ -53,20 +53,35 @@ opkg install /tmp/trusttunnel-keenetic_1.0.0_aarch64.ipk
     "username": "myuser",
     "password": "mypassword",
     "upstream_protocol": "http2",
+    "certificate": "",
     "vpn_mode": "general",
     "dns_upstreams": ["tls://1.1.1.1"],
+    "killswitch_enabled": false,
+    "included_routes": ["0.0.0.0/0", "2000::/3"],
     "excluded_routes": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+    "mtu_size": 1280,
+    "anti_dpi": false,
+    "socks_address": "",
+    "skip_verification": false,
     "reconnect_delay": 5,
     "loglevel": "info"
   },
   "webui": {
     "port": 8080,
     "bind": "0.0.0.0",
-    "auth": true
+    "auth": true,
+    "ndm_host": "",
+    "ndm_port": 80
   },
   "logging": {
     "level": "info",
     "max_lines": 500
+  },
+  "routing": {
+    "enabled": true,
+    "watchdog_enabled": true,
+    "watchdog_interval": 30,
+    "watchdog_failures": 3
   }
 }
 ```
@@ -137,85 +152,18 @@ trusttunnel-keenetic (wrapper, Rust)
         ├── Генерация TOML-конфига для trusttunnel_client
         ├── Запуск процесса trusttunnel_client --config <path>
         ├── Мониторинг и авто-переподключение
+        ├── Watchdog (проверка tun/WAN/connectivity)
+        ├── Настройка маршрутов и NAT (iptables + ndmc)
         └── Graceful shutdown (SIGTERM → SIGKILL)
 ```
 
 Wrapper управляет бинарником `trusttunnel_client` как дочерним процессом. Настройки из JSON-конфига wrapper транслируются в TOML-файл, который понимает `trusttunnel_client`.
 
-## Сборка из исходников
+## Сборка и разработка
 
-### Для хост-системы (тестирование)
+Подробные инструкции по сборке, кросс-компиляции, упаковке IPK, CI/CD и локальной разработке вынесены в:
 
-```sh
-cargo build --release
-```
-
-### Кросс-компиляция для роутера
-
-```sh
-# Установите cross
-cargo install cross --git https://github.com/cross-rs/cross
-
-# Соберите для aarch64
-cross build --release --target aarch64-unknown-linux-musl
-
-# Или используйте скрипт
-./scripts/build-release.sh aarch64-unknown-linux-musl
-```
-
-### Сборка IPK-пакета
-
-```sh
-# 1. Скачайте pre-built trusttunnel_client
-./scripts/download-client.sh v0.99.105 linux-aarch64 client_bin
-
-# 2. Соберите wrapper
-cross build --release --target aarch64-unknown-linux-musl
-
-# 3. Соберите .ipk
-./scripts/package-ipk.sh aarch64 1.0.0 \
-  target/aarch64-unknown-linux-musl/release/trusttunnel-keenetic \
-  client_bin
-```
-
-## CI/CD
-
-При пуше тега `v*` GitHub Actions автоматически:
-
-1. Скачивает pre-built `trusttunnel_client` для каждой архитектуры
-2. Собирает wrapper через `cross` (статическая линковка musl)
-3. Пакует `.ipk` для aarch64, mipsel, armv7, x86_64
-4. Проверяет размер (предупреждение при > 10 MB)
-5. Публикует Release с пакетами и SHA256SUMS
-
-Ручной запуск: вкладка Actions → Build TrustTunnel IPK → Run workflow.
-
-## Структура проекта
-
-```
-├── Cargo.toml                       # Зависимости и профили оптимизации
-├── Cargo.lock                       # Фиксированные версии
-├── .cargo/config.toml               # Настройки кросс-компиляции
-├── .github/workflows/build.yml      # CI/CD
-├── src/
-│   ├── main.rs                      # CLI, daemon, сигналы
-│   ├── config.rs                    # JSON-конфиг wrapper + генерация TOML
-│   ├── tunnel.rs                    # Управление процессом trusttunnel_client
-│   ├── webui.rs                     # HTTP-сервер и API
-│   ├── auth.rs                      # NDM API авторизация
-│   └── logs.rs                      # Кольцевой буфер логов
-├── package/
-│   ├── CONTROL/
-│   │   ├── postinst                 # Скрипт после установки
-│   │   ├── prerm                    # Скрипт перед удалением
-│   │   └── conffiles                # Список файлов конфигурации
-│   ├── etc/trusttunnel/config.json  # Шаблон конфигурации
-│   └── www/index.html               # Веб-интерфейс (встраивается в бинарник)
-└── scripts/
-    ├── build-release.sh             # Сборка release-бинарника
-    ├── download-client.sh           # Скачивание pre-built клиента
-    └── package-ipk.sh              # Сборка .ipk пакета
-```
+- [`docs/BUILDING.md`](docs/BUILDING.md)
 
 ## Конфигурация
 
@@ -228,12 +176,14 @@ cross build --release --target aarch64-unknown-linux-musl
 | `username` | string | `""` | Имя пользователя |
 | `password` | string | `""` | Пароль |
 | `upstream_protocol` | string | `"http2"` | Протокол: `http2` или `http3` |
+| `certificate` | string | `""` | PEM-сертификат endpoint (опционально) |
 | `vpn_mode` | string | `"general"` | Режим: `general` (весь трафик) или `selective` |
 | `dns_upstreams` | string[] | `["tls://1.1.1.1"]` | DNS-серверы через VPN |
 | `killswitch_enabled` | bool | `false` | Блокировка трафика вне VPN |
-| `included_routes` | string[] | `["0.0.0.0/0"]` | Маршруты через VPN |
+| `included_routes` | string[] | `["0.0.0.0/0", "2000::/3"]` | Маршруты через VPN |
 | `excluded_routes` | string[] | `["10.0.0.0/8", ...]` | Маршруты в обход VPN |
 | `mtu_size` | number | `1280` | MTU туннельного интерфейса |
+| `anti_dpi` | bool | `false` | Включение anti-DPI режима клиента |
 | `socks_address` | string | `""` | Адрес SOCKS5 прокси (если нужен) |
 | `skip_verification` | bool | `false` | Пропуск проверки сертификата |
 | `reconnect_delay` | number | `5` | Задержка переподключения (секунды) |
@@ -246,6 +196,8 @@ cross build --release --target aarch64-unknown-linux-musl
 | `port` | number | `8080` | Порт HTTP-сервера |
 | `bind` | string | `"0.0.0.0"` | Адрес привязки |
 | `auth` | bool | `true` | Требовать авторизацию |
+| `ndm_host` | string | `""` | Хост NDM API (если пусто — автоопределение LAN IP) |
+| `ndm_port` | number | `80` | Порт NDM API |
 
 ### Параметры логирования (`logging`)
 
@@ -254,19 +206,20 @@ cross build --release --target aarch64-unknown-linux-musl
 | `level` | string | `"info"` | Уровень логирования wrapper |
 | `max_lines` | number | `500` | Размер кольцевого буфера логов |
 
+### Параметры маршрутизации (`routing`)
+
+| Параметр | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `enabled` | bool | `true` | Включить настройку маршрутов/iptables при подключении |
+| `watchdog_enabled` | bool | `true` | Включить watchdog проверки туннеля |
+| `watchdog_interval` | number | `30` | Интервал watchdog-проверок (секунды) |
+| `watchdog_failures` | number | `3` | Порог неудачных проверок до рестарта |
+
 ## API
 
-Все эндпоинты кроме `/api/login` требуют заголовок `Authorization` с токеном сессии.
+Полное описание эндпоинтов, форматов запросов/ответов и кодов ошибок:
 
-| Метод | Путь | Описание |
-|---|---|---|
-| POST | `/api/login` | Авторизация (`{"login":"...","password":"..."}`) |
-| GET | `/api/status` | Статус туннеля |
-| GET | `/api/config` | Текущие настройки туннеля |
-| POST | `/api/config` | Обновление настроек |
-| POST | `/api/control` | Управление (`{"action":"connect\|disconnect\|restart"}`) |
-| GET | `/api/logs` | Логи (`?limit=100`) |
-| GET | `/` | Веб-интерфейс (HTML) |
+- [`docs/API.md`](docs/API.md)
 
 ## Безопасность
 

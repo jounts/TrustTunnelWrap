@@ -11,6 +11,8 @@ pub struct WrapperConfig {
     pub webui: WebUISettings,
     #[serde(default)]
     pub logging: LogSettings,
+    #[serde(default)]
+    pub routing: RoutingSettings,
 }
 
 /// Settings that map to TrustTunnelClient's TOML config.
@@ -43,6 +45,8 @@ pub struct TunnelSettings {
     #[serde(default = "default_mtu")]
     pub mtu_size: u16,
     #[serde(default)]
+    pub anti_dpi: bool,
+    #[serde(default)]
     pub socks_address: String,
     #[serde(default = "default_reconnect_delay")]
     pub reconnect_delay: u64,
@@ -58,6 +62,10 @@ pub struct WebUISettings {
     pub bind: String,
     #[serde(default = "default_true")]
     pub auth: bool,
+    #[serde(default)]
+    pub ndm_host: String,
+    #[serde(default = "default_ndm_port")]
+    pub ndm_port: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +76,32 @@ pub struct LogSettings {
     pub max_lines: usize,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RoutingSettings {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_true")]
+    pub watchdog_enabled: bool,
+    #[serde(default = "default_watchdog_interval")]
+    pub watchdog_interval: u64,
+    #[serde(default = "default_watchdog_failures")]
+    pub watchdog_failures: u32,
+}
+
+impl Default for RoutingSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            watchdog_enabled: true,
+            watchdog_interval: default_watchdog_interval(),
+            watchdog_failures: default_watchdog_failures(),
+        }
+    }
+}
+
+fn default_watchdog_interval() -> u64 { 30 }
+fn default_watchdog_failures() -> u32 { 3 }
+
 fn default_upstream_protocol() -> String { "http2".into() }
 fn default_vpn_mode() -> String { "general".into() }
 fn default_mtu() -> u16 { 1280 }
@@ -77,6 +111,7 @@ fn default_port() -> u16 { 8080 }
 fn default_bind() -> String { "0.0.0.0".into() }
 fn default_true() -> bool { true }
 fn default_max_lines() -> usize { 500 }
+fn default_ndm_port() -> u16 { 80 }
 
 impl Default for TunnelSettings {
     fn default() -> Self {
@@ -98,6 +133,7 @@ impl Default for TunnelSettings {
                 "192.168.0.0/16".into(),
             ],
             mtu_size: default_mtu(),
+            anti_dpi: false,
             socks_address: String::new(),
             reconnect_delay: default_reconnect_delay(),
             loglevel: default_loglevel(),
@@ -111,6 +147,8 @@ impl Default for WebUISettings {
             port: default_port(),
             bind: default_bind(),
             auth: true,
+            ndm_host: String::new(),
+            ndm_port: default_ndm_port(),
         }
     }
 }
@@ -159,6 +197,7 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
         "killswitch_enabled = {}\n",
         settings.killswitch_enabled
     ));
+    toml.push_str(&format!("anti_dpi = {}\n", settings.anti_dpi));
 
     if !settings.dns_upstreams.is_empty() {
         toml.push_str(&format!(
@@ -198,11 +237,15 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
     }
 
     toml.push_str("\n[listener.tun]\n");
-    if !settings.included_routes.is_empty() {
+    let included = if settings.included_routes.is_empty() && settings.vpn_mode == "general" {
+        vec!["0.0.0.0/0".to_string(), "2000::/3".to_string()]
+    } else {
+        settings.included_routes.clone()
+    };
+    if !included.is_empty() {
         toml.push_str(&format!(
             "included_routes = [{}]\n",
-            settings
-                .included_routes
+            included
                 .iter()
                 .map(|s| format!("\"{}\"", s))
                 .collect::<Vec<_>>()

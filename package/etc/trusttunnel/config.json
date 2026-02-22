@@ -13,6 +13,7 @@
     "included_routes": ["0.0.0.0/0", "2000::/3"],
     "excluded_routes": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
     "mtu_size": 1280,
+    "anti_dpi": false,
     "socks_address": "",
     "reconnect_delay": 5,
     "loglevel": "info"
@@ -25,5 +26,11 @@
   "logging": {
     "level": "info",
     "max_lines": 500
+  },
+  "routing": {
+    "enabled": true,
+    "watchdog_enabled": true,
+    "watchdog_interval": 30,
+    "watchdog_failures": 3
   }
 }

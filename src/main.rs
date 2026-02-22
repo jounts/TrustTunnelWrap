@@ -1,6 +1,7 @@
 mod auth;
 mod config;
 mod logs;
+mod routing;
 mod tunnel;
 mod webui;
 
@@ -40,7 +41,7 @@ fn main() {
 
     log::info!(
         "trusttunnel-keenetic v{} starting",
-        env!("CARGO_PKG_VERSION")
+        env!("TRUSTTUNNEL_VERSION")
     );
 
     let cfg = match WrapperConfig::load(&args.config) {
@@ -73,7 +74,7 @@ fn main() {
     let config = Arc::new(Mutex::new(cfg.clone()));
 
     // Create tunnel manager
-    let tunnel = tunnel::TunnelManager::new(cfg.tunnel.clone());
+    let tunnel = tunnel::TunnelManager::new(cfg.tunnel.clone(), &cfg.routing);
 
     // Set up signal handlers
     let tunnel_for_signal = tunnel.clone();
@@ -96,7 +97,20 @@ fn main() {
     }
 
     // Start WebUI (blocks on the main thread)
-    let web = webui::WebUI::new(tunnel, config, args.config);
+    let ndm_host = if cfg.webui.ndm_host.is_empty() {
+        auth::detect_ndm_host()
+    } else {
+        cfg.webui.ndm_host.clone()
+    };
+    log::info!("NDM API endpoint: {}:{}", ndm_host, cfg.webui.ndm_port);
+
+    let web = webui::WebUI::new(
+        tunnel,
+        config,
+        args.config,
+        ndm_host,
+        cfg.webui.ndm_port,
+    );
     web.run(&cfg.webui.bind, cfg.webui.port);
 }
 

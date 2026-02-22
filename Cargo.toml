@@ -2,7 +2,7 @@
 name = "trusttunnel-keenetic"
 version = "1.0.0"
 edition = "2021"
-authors = ["TrustTunnel Community"]
+authors = ["jounts"]
 description = "TrustTunnel VPN wrapper for Keenetic/Netcraze routers"
 license = "MIT"
 
@@ -27,4 +27,4 @@ uuid = { version = "1", features = ["v4", "fast-rng"] }
 clap = { version = "4", features = ["derive"] }
 log = "0.4"
 env_logger = "0.11"
-nix = { version = "0.28", features = ["process", "signal", "fs"] }
+nix = { version = "0.28", features = ["process", "signal", "fs", "net"] }

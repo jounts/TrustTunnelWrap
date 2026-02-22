@@ -48,22 +48,27 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
       - name: Set target triple
         id: target
         run: |
           case "${{ matrix.arch }}" in
             aarch64) echo "triple=aarch64-unknown-linux-musl" >> $GITHUB_OUTPUT
-                     echo "client_arch=linux-aarch64" >> $GITHUB_OUTPUT ;;
+                     echo "client_arch=linux-aarch64" >> $GITHUB_OUTPUT
+                     echo "use_cross=true" >> $GITHUB_OUTPUT ;;
             mipsel)  echo "triple=mipsel-unknown-linux-musl" >> $GITHUB_OUTPUT
-                     echo "client_arch=linux-mipsel" >> $GITHUB_OUTPUT ;;
+                     echo "client_arch=linux-mipsel" >> $GITHUB_OUTPUT
+                     echo "use_cross=false" >> $GITHUB_OUTPUT ;;
             armv7)   echo "triple=armv7-unknown-linux-musleabihf" >> $GITHUB_OUTPUT
-                     echo "client_arch=linux-armv7" >> $GITHUB_OUTPUT ;;
+                     echo "client_arch=linux-armv7" >> $GITHUB_OUTPUT
+                     echo "use_cross=true" >> $GITHUB_OUTPUT ;;
             x86_64)  echo "triple=x86_64-unknown-linux-musl" >> $GITHUB_OUTPUT
-                     echo "client_arch=linux-x86_64" >> $GITHUB_OUTPUT ;;
+                     echo "client_arch=linux-x86_64" >> $GITHUB_OUTPUT
+                     echo "use_cross=true" >> $GITHUB_OUTPUT ;;
           esac
+
+      - name: Install cross
+        if: steps.target.outputs.use_cross == 'true'
+        run: cargo install cross --git https://github.com/cross-rs/cross
 
       - name: Download pre-built TrustTunnelClient
         run: |
@@ -83,14 +88,34 @@ jobs:
           restore-keys: cargo-${{ matrix.arch }}-
 
       - name: Build wrapper
+        env:
+          TRUSTTUNNEL_VERSION: ${{ github.ref_name || format('0.0.0-dev.{0}', github.run_number) }}
         run: |
-          cross build --release --target ${{ steps.target.outputs.triple }}
+          if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
+            cross build --release --target ${{ steps.target.outputs.triple }}
+          else
+            # mipsel-unknown-linux-musl is Tier 3 — use rust-musl-cross Docker image
+            docker run --rm \
+              -v "$(pwd)":/home/rust/src \
+              -v "${HOME}/.cargo/registry":/root/.cargo/registry \
+              -v "${HOME}/.cargo/git":/root/.cargo/git \
+              -e TRUSTTUNNEL_VERSION="${TRUSTTUNNEL_VERSION}" \
+              ghcr.io/rust-cross/rust-musl-cross:mipsel-musl \
+              bash -c "export PATH=/usr/local/musl/bin:\$PATH && \
+                ln -sf mipsel-unknown-linux-musl-gcc /usr/local/musl/bin/mipsel-linux-musl-gcc && \
+                ln -sf mipsel-unknown-linux-musl-ar /usr/local/musl/bin/mipsel-linux-musl-ar && \
+                rustup default nightly && \
+                cargo build --release --target mipsel-unknown-linux-musl -Zbuild-std=std,panic_abort"
+          fi
           ls -lh target/${{ steps.target.outputs.triple }}/release/trusttunnel-keenetic
 
       - name: Package IPK
         run: |
-          VERSION="${GITHUB_REF#refs/tags/v}"
-          [ "$VERSION" = "$GITHUB_REF" ] && VERSION="1.0.0-${{ github.run_number }}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/}"
+          else
+            VERSION="0.0.0-dev.${{ github.run_number }}"
+          fi
 
           ./scripts/package-ipk.sh \
             "${{ matrix.arch }}" \

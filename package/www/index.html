@@ -67,6 +67,7 @@ footer{text-align:center;padding:1rem;color:var(--muted);font-size:.82rem}
 <div class="fg"><label for="dns">DNS (через запятую)</label><input id="dns" placeholder="tls://1.1.1.1"></div>
 <div class="fg"><label for="excl-routes">Исключённые маршруты</label>
 <textarea id="excl-routes" rows="2" placeholder="10.0.0.0/8, 192.168.0.0/16"></textarea></div>
+<div class="fg"><label><input type="checkbox" id="anti-dpi"> Anti-DPI (обход блокировок)</label></div>
 <div class="fg"><label><input type="checkbox" id="skip-verify"> Пропуск проверки сертификата</label></div>
 <div id="cfg-msg"></div>
 <div class="flex">
@@ -143,6 +144,7 @@ async function loadCfg(){
     document.getElementById('dns').value=(c.dns_upstreams||[]).join(', ');
     document.getElementById('excl-routes').value=(c.excluded_routes||[]).join(', ');
     document.getElementById('skip-verify').checked=!!c.skip_verification;
+    document.getElementById('anti-dpi').checked=!!c.anti_dpi;
   }catch(e){}
 }
 
@@ -157,7 +159,8 @@ async function saveConfig(){
     vpn_mode:document.getElementById('vpn-mode').value,
     dns_upstreams:document.getElementById('dns').value.split(',').map(s=>s.trim()).filter(Boolean),
     excluded_routes:document.getElementById('excl-routes').value.split(',').map(s=>s.trim()).filter(Boolean),
-    skip_verification:document.getElementById('skip-verify').checked
+    skip_verification:document.getElementById('skip-verify').checked,
+    anti_dpi:document.getElementById('anti-dpi').checked
   };
   if(!cfg.hostname||!cfg.addresses.length){m.textContent='Hostname и адреса обязательны';m.className='err';return}
   try{await api('/config','POST',cfg);m.textContent='Конфигурация сохранена';m.className='ok'}

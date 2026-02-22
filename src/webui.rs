@@ -51,6 +51,8 @@ pub struct WebUI {
     config: Arc<Mutex<WrapperConfig>>,
     config_path: String,
     sessions: Mutex<Sessions>,
+    ndm_host: String,
+    ndm_port: u16,
 }
 
 impl WebUI {
@@ -58,12 +60,16 @@ impl WebUI {
         tunnel: Arc<TunnelManager>,
         config: Arc<Mutex<WrapperConfig>>,
         config_path: String,
+        ndm_host: String,
+        ndm_port: u16,
     ) -> Arc<Self> {
         Arc::new(Self {
             tunnel,
             config,
             config_path,
             sessions: Mutex::new(Sessions::new()),
+            ndm_host,
+            ndm_port,
         })
     }
 
@@ -136,7 +142,7 @@ impl WebUI {
             return json_response(400, r#"{"error":"login and password required"}"#);
         }
 
-        if auth::authenticate("127.0.0.1", 80, &login, &password) {
+        if auth::authenticate(&self.ndm_host, self.ndm_port, &login, &password) {
             let token = self.sessions.lock().unwrap().create();
             log::info!("WebUI: user '{}' logged in", login);
             json_response(

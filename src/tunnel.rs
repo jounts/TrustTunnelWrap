@@ -1,7 +1,8 @@
 use crate::config::{generate_client_toml, TunnelSettings};
 use crate::logs;
+use crate::routing;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -23,10 +24,22 @@ pub struct TunnelManager {
     running: AtomicBool,
     should_stop: AtomicBool,
     connect_time: Mutex<Option<Instant>>,
+    routing_enabled: bool,
+    routing_active: Arc<AtomicBool>,
+    // watchdog
+    watchdog_enabled: bool,
+    watchdog_interval: Duration,
+    watchdog_max_failures: u32,
+    watchdog_failures: AtomicU32,
+    last_watchdog_check: Mutex<Instant>,
+    last_wan_interface: Arc<Mutex<String>>,
 }
 
 impl TunnelManager {
-    pub fn new(settings: TunnelSettings) -> Arc<Self> {
+    pub fn new(
+        settings: TunnelSettings,
+        routing: &crate::config::RoutingSettings,
+    ) -> Arc<Self> {
         Arc::new(Self {
             settings: Mutex::new(settings),
             status: Mutex::new(TunnelStatus::default()),
@@ -34,6 +47,14 @@ impl TunnelManager {
             running: AtomicBool::new(false),
             should_stop: AtomicBool::new(false),
             connect_time: Mutex::new(None),
+            routing_enabled: routing.enabled,
+            routing_active: Arc::new(AtomicBool::new(false)),
+            watchdog_enabled: routing.watchdog_enabled,
+            watchdog_interval: Duration::from_secs(routing.watchdog_interval),
+            watchdog_max_failures: routing.watchdog_failures,
+            watchdog_failures: AtomicU32::new(0),
+            last_watchdog_check: Mutex::new(Instant::now()),
+            last_wan_interface: Arc::new(Mutex::new(String::new())),
         })
     }
 
@@ -108,13 +129,43 @@ impl TunnelManager {
 
         self.should_stop.store(false, Ordering::SeqCst);
         self.running.store(true, Ordering::SeqCst);
-        self.spawn_process()
+        self.spawn_process()?;
+        self.spawn_routing_setup();
+        Ok(())
+    }
+
+    fn spawn_routing_setup(&self) {
+        if !self.routing_enabled {
+            return;
+        }
+        let addresses = self.settings.lock().unwrap().addresses.clone();
+        let flag = self.routing_active.clone();
+        let wan_ref = self.last_wan_interface.clone();
+
+        std::thread::Builder::new()
+            .name("routing-setup".into())
+            .spawn(move || match routing::setup_routing(&addresses) {
+                Ok(wan) => {
+                    flag.store(true, Ordering::SeqCst);
+                    *wan_ref.lock().unwrap() = wan;
+                }
+                Err(e) => log::error!("[routing] setup failed: {}", e),
+            })
+            .ok();
+    }
+
+    fn teardown_if_active(&self) {
+        if self.routing_active.swap(false, Ordering::SeqCst) {
+            let addresses = self.settings.lock().unwrap().addresses.clone();
+            routing::teardown_routing(&addresses);
+        }
     }
 
     pub fn stop(&self) {
         self.should_stop.store(true, Ordering::SeqCst);
         self.running.store(false, Ordering::SeqCst);
         self.kill_child();
+        self.teardown_if_active();
     }
 
     fn kill_child(&self) {
@@ -157,8 +208,97 @@ impl TunnelManager {
         self.start()
     }
 
+    fn respawn_with_delay(&self, reconnect_delay: u64) {
+        self.teardown_if_active();
+
+        log::info!("Reconnecting in {} seconds...", reconnect_delay);
+        logs::global_buffer().push(format!("[tunnel] reconnecting in {}s...", reconnect_delay));
+        std::thread::sleep(Duration::from_secs(reconnect_delay));
+
+        if self.running.load(Ordering::SeqCst) && !self.should_stop.load(Ordering::SeqCst) {
+            if let Err(e) = self.spawn_process() {
+                log::error!("Respawn failed: {}", e);
+                self.status.lock().unwrap().last_error = e;
+            } else {
+                self.spawn_routing_setup();
+                self.watchdog_failures.store(0, Ordering::SeqCst);
+            }
+        }
+    }
+
+    fn full_restart(&self, reason: &str, reconnect_delay: u64) {
+        let msg = format!("[watchdog] {}, restarting...", reason);
+        log::warn!("{}", msg);
+        logs::global_buffer().push(msg.clone());
+        self.status.lock().unwrap().last_error = msg;
+
+        self.kill_child();
+        self.respawn_with_delay(reconnect_delay);
+    }
+
+    fn reroute(&self, new_wan: &str) {
+        let msg = format!("[watchdog] WAN changed → {}, updating server routes", new_wan);
+        log::info!("{}", msg);
+        logs::global_buffer().push(msg);
+
+        let addresses = self.settings.lock().unwrap().addresses.clone();
+        routing::reroute_server_via_wan(&addresses, new_wan);
+        *self.last_wan_interface.lock().unwrap() = new_wan.to_string();
+        self.watchdog_failures.store(0, Ordering::SeqCst);
+    }
+
+    fn run_watchdog_check(&self, reconnect_delay: u64) {
+        if !self.watchdog_enabled || !self.routing_active.load(Ordering::SeqCst) {
+            return;
+        }
+
+        let elapsed = self.last_watchdog_check.lock().unwrap().elapsed();
+        if elapsed < self.watchdog_interval {
+            return;
+        }
+        *self.last_watchdog_check.lock().unwrap() = Instant::now();
+
+        if !routing::is_tun_alive() {
+            self.full_restart("OpkgTun0 interface disappeared", reconnect_delay);
+            return;
+        }
+
+        if let Some(current_wan) = routing::current_wan_interface() {
+            let saved_wan = self.last_wan_interface.lock().unwrap().clone();
+            if !saved_wan.is_empty() && current_wan != saved_wan {
+                log::warn!(
+                    "[watchdog] WAN changed: {} -> {}",
+                    saved_wan,
+                    current_wan
+                );
+                self.reroute(&current_wan);
+                return;
+            }
+        }
+
+        if !routing::check_connectivity() {
+            let fails = self.watchdog_failures.fetch_add(1, Ordering::SeqCst) + 1;
+            log::warn!(
+                "[watchdog] connectivity check failed ({}/{})",
+                fails,
+                self.watchdog_max_failures
+            );
+            if fails >= self.watchdog_max_failures {
+                self.full_restart(
+                    &format!("connectivity lost ({} failures)", fails),
+                    reconnect_delay,
+                );
+            }
+        } else {
+            let prev = self.watchdog_failures.swap(0, Ordering::SeqCst);
+            if prev > 0 {
+                log::info!("[watchdog] connectivity restored");
+            }
+        }
+    }
+
     /// Main monitoring loop -- call from a dedicated thread.
-    /// Watches the child process and respawns on crash.
+    /// Watches the child process, respawns on crash, and runs watchdog checks.
     pub fn monitor_loop(self: &Arc<Self>) {
         let reconnect_delay = self.settings.lock().unwrap().reconnect_delay;
 
@@ -196,25 +336,17 @@ impl TunnelManager {
                         }
                     }
                 } else {
-                    // No child but running is true -- need to respawn
                     true
                 }
             };
 
-            if exited && self.running.load(Ordering::SeqCst) && !self.should_stop.load(Ordering::SeqCst) {
-                log::info!("Reconnecting in {} seconds...", reconnect_delay);
-                logs::global_buffer().push(format!(
-                    "[tunnel] reconnecting in {}s...",
-                    reconnect_delay
-                ));
-                std::thread::sleep(Duration::from_secs(reconnect_delay));
-
-                if self.running.load(Ordering::SeqCst) && !self.should_stop.load(Ordering::SeqCst) {
-                    if let Err(e) = self.spawn_process() {
-                        log::error!("Respawn failed: {}", e);
-                        self.status.lock().unwrap().last_error = e;
-                    }
-                }
+            if exited
+                && self.running.load(Ordering::SeqCst)
+                && !self.should_stop.load(Ordering::SeqCst)
+            {
+                self.respawn_with_delay(reconnect_delay);
+            } else if !exited {
+                self.run_watchdog_check(reconnect_delay);
             }
 
             std::thread::sleep(Duration::from_millis(500));
