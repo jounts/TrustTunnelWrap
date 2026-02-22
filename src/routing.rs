@@ -1,4 +1,5 @@
 use std::process::Command;
+use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 const TUN_NAME: &str = "tun0";
@@ -7,6 +8,9 @@ const NDM_IF_NAME: &str = "OpkgTun0";
 const ROUTE_METRIC: &str = "500";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const CONNECTIVITY_ROUTE_PROBE_IP: &str = "1.1.1.1";
+const CONNECTIVITY_TCP_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECTIVITY_TCP_PROBES: &[(&str, u16)] = &[("1.1.1.1", 443), ("8.8.8.8", 53)];
 
 fn run_cmd(program: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
@@ -259,13 +263,29 @@ pub fn is_tun_alive() -> bool {
     std::path::Path::new(&format!("/sys/class/net/{}", OPKG_TUN_NAME)).exists()
 }
 
+fn route_uses_tunnel(ip: &str) -> bool {
+    let out = match run_cmd("ip", &["route", "get", ip]) {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    out.contains(&format!("dev {}", OPKG_TUN_NAME))
+}
+
+fn tcp_probe(ip: &str, port: u16) -> bool {
+    let addr: SocketAddr = match format!("{}:{}", ip, port).parse() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+    TcpStream::connect_timeout(&addr, CONNECTIVITY_TCP_TIMEOUT).is_ok()
+}
+
 pub fn check_connectivity() -> bool {
-    // Single ICMP ping through the tunnel interface, 5s timeout
-    run_cmd(
-        "ping",
-        &["-c1", "-W5", "-I", OPKG_TUN_NAME, "1.1.1.1"],
-    )
-    .is_ok()
+    if !route_uses_tunnel(CONNECTIVITY_ROUTE_PROBE_IP) {
+        return false;
+    }
+    CONNECTIVITY_TCP_PROBES
+        .iter()
+        .any(|(ip, port)| tcp_probe(ip, *port))
 }
 
 // --------------- teardown ---------------
