@@ -13,6 +13,13 @@ Authorization: <session-token>
 
 Токен выдаётся через `POST /api/login`, TTL сессии — 1 час (продлевается при активности).
 
+### Быстрый шаблон для curl
+
+```sh
+BASE_URL="http://192.168.1.1:8080"
+TOKEN="<session-token>"
+```
+
 ---
 
 ## POST /api/login
@@ -45,6 +52,14 @@ Authorization: <session-token>
 }
 ```
 
+### curl
+
+```sh
+curl -sS -X POST "$BASE_URL/api/login" \
+  -H "Content-Type: application/json" \
+  -d '{"login":"admin","password":"secret"}'
+```
+
 ---
 
 ## GET /api/status
@@ -60,6 +75,13 @@ Authorization: <session-token>
   "last_error": "",
   "pid": 12345
 }
+```
+
+### curl
+
+```sh
+curl -sS "$BASE_URL/api/status" \
+  -H "Authorization: $TOKEN"
 ```
 
 ---
@@ -92,6 +114,13 @@ Authorization: <session-token>
 }
 ```
 
+### curl
+
+```sh
+curl -sS "$BASE_URL/api/config" \
+  -H "Authorization: $TOKEN"
+```
+
 ---
 
 ## POST /api/config
@@ -117,6 +146,33 @@ Authorization: <session-token>
 {
   "status": "updated"
 }
+```
+
+### curl
+
+```sh
+curl -sS -X POST "$BASE_URL/api/config" \
+  -H "Authorization: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "hostname":"vpn.example.com",
+    "addresses":["1.2.3.4:443"],
+    "username":"myuser",
+    "password":"mypassword",
+    "upstream_protocol":"http2",
+    "certificate":"",
+    "skip_verification":false,
+    "vpn_mode":"general",
+    "dns_upstreams":["tls://1.1.1.1"],
+    "killswitch_enabled":false,
+    "included_routes":["0.0.0.0/0","2000::/3"],
+    "excluded_routes":["10.0.0.0/8","172.16.0.0/12","192.168.0.0/16"],
+    "mtu_size":1280,
+    "anti_dpi":false,
+    "socks_address":"",
+    "reconnect_delay":5,
+    "loglevel":"info"
+  }'
 ```
 
 ---
@@ -170,6 +226,28 @@ Authorization: <session-token>
 }
 ```
 
+### curl
+
+```sh
+# connect
+curl -sS -X POST "$BASE_URL/api/control" \
+  -H "Authorization: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"connect"}'
+
+# disconnect
+curl -sS -X POST "$BASE_URL/api/control" \
+  -H "Authorization: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"disconnect"}'
+
+# restart
+curl -sS -X POST "$BASE_URL/api/control" \
+  -H "Authorization: $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"restart"}'
+```
+
 ---
 
 ## GET /api/logs
@@ -196,11 +274,24 @@ Authorization: <session-token>
 
 `total` — текущее количество строк во внутреннем буфере wrapper-а.
 
+### curl
+
+```sh
+curl -sS "$BASE_URL/api/logs?limit=100" \
+  -H "Authorization: $TOKEN"
+```
+
 ---
 
 ## GET /
 
 Возвращает встроенный HTML WebUI.
+
+### curl
+
+```sh
+curl -sS "$BASE_URL/"
+```
 
 ---
 
