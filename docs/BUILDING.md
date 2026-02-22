@@ -226,8 +226,8 @@ Wrapper поддерживает запись логов в файл с рота
   "max_lines": 500,
   "file_enabled": true,
   "file_path": "/var/log/trusttunnel-keenetic/trusttunnel-keenetic.log",
-  "rotate_size": "10MB",
-  "rotate_keep": 3
+  "rotate_size": "512KB",
+  "rotate_keep": 1
 }
 ```
 

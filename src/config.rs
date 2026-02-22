@@ -128,8 +128,8 @@ fn default_file_enabled() -> bool { true }
 fn default_log_file_path() -> String {
     "/var/log/trusttunnel-keenetic/trusttunnel-keenetic.log".into()
 }
-fn default_rotate_size_bytes() -> u64 { 10 * 1024 * 1024 }
-fn default_rotate_keep() -> usize { 3 }
+fn default_rotate_size_bytes() -> u64 { 512 * 1024 }
+fn default_rotate_keep() -> usize { 1 }
 
 fn parse_size_with_units(value: &str) -> Option<u64> {
     let trimmed = value.trim();
