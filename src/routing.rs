@@ -2,7 +2,7 @@ use std::process::Command;
 use std::time::Duration;
 
 const TUN_NAME: &str = "tun0";
-const OPKG_TUN_NAME: &str = "OpkgTun0";
+const OPKG_TUN_NAME: &str = "opkgtun0";
 const NDM_IF_NAME: &str = "OpkgTun0";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -173,7 +173,7 @@ fn wait_for_tun() -> bool {
 }
 
 /// Configure interface + NDM routing after the VPN client creates tun0.
-/// Renames tun0 → OpkgTun0 and sets default route via NDM.
+/// Renames tun0 → opkgtun0 and sets default route via NDM.
 /// Returns the detected WAN interface name on success.
 pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     log::info!("[routing] waiting for {} ...", TUN_NAME);
