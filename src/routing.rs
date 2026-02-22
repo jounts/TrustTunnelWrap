@@ -133,7 +133,7 @@ fn prefix_to_netmask(prefix: u8) -> String {
 }
 
 fn register_ndm_interface() {
-    let msg = format!("[routing] registering {} in NDM (ndmc={})", NDM_IF_NAME, find_ndmc());
+    let msg = format!("[routing] ensuring {} in NDM (ndmc={})", NDM_IF_NAME, find_ndmc());
     log::info!("{}", msg);
     crate::logs::global_buffer().push(msg);
 
@@ -148,13 +148,19 @@ fn register_ndm_interface() {
     ndmc(&format!("interface {} up", NDM_IF_NAME));
 }
 
-fn unregister_ndm_interface() {
-    let msg = format!("[routing] removing {} from NDM", NDM_IF_NAME);
-    log::info!("{}", msg);
-    crate::logs::global_buffer().push(msg);
-
-    ndmc(&format!("interface {} down", NDM_IF_NAME));
-    ndmc(&format!("no interface {}", NDM_IF_NAME));
+fn set_ndm_default_routes() {
+    if let Some((ip, _)) = get_tun_ip_mask() {
+        ndmc(&format!("ip route default {} {}", ip, NDM_IF_NAME));
+    } else {
+        let msg = format!(
+            "[routing] could not detect {} IPv4 address, skipping NDM default IPv4 route",
+            NDM_IF_NAME
+        );
+        log::warn!("{}", msg);
+        crate::logs::global_buffer().push(msg);
+    }
+    // IPv6 default route is harmless to request even when IPv6 is disabled.
+    ndmc(&format!("ipv6 route default {}", NDM_IF_NAME));
 }
 
 fn wait_for_tun() -> bool {
@@ -206,11 +212,10 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
         }
     }
 
-    log::info!(
-        "[routing] default route via {} metric {}",
-        OPKG_TUN_NAME,
-        ROUTE_METRIC
-    );
+    log::info!("[routing] setting default route via {}", OPKG_TUN_NAME);
+    set_ndm_default_routes();
+
+    // Keep a kernel-route fallback for environments where NDM route update lags.
     let _ = run_cmd(
         "ip",
         &["route", "add", "default", "dev", OPKG_TUN_NAME, "metric", ROUTE_METRIC],
@@ -319,7 +324,8 @@ pub fn teardown_routing(server_addresses: &[String]) {
         run_cmd_ok("ip", &["route", "del", &format!("{}/32", ip)]);
     }
 
-    unregister_ndm_interface();
+    // Keep NDM interface object persistent across restarts so GUI metadata is stable.
+    ndmc(&format!("interface {} down", NDM_IF_NAME));
     run_cmd_ok("ip", &["link", "del", OPKG_TUN_NAME]);
 
     log::info!("[routing] teardown complete");
