@@ -117,6 +117,13 @@ fn get_tun_ip_mask() -> Option<(String, String)> {
     None
 }
 
+fn get_tun_mtu() -> Option<u16> {
+    let out = run_cmd("ip", &["-o", "link", "show", OPKG_TUN_NAME]).ok()?;
+    let parts: Vec<&str> = out.split_whitespace().collect();
+    let idx = parts.iter().position(|&p| p == "mtu")?;
+    parts.get(idx + 1)?.parse::<u16>().ok()
+}
+
 fn prefix_to_netmask(prefix: u8) -> String {
     let bits: u32 = if prefix >= 32 {
         0xFFFF_FFFF
@@ -142,8 +149,12 @@ fn register_ndm_interface() {
     if let Some((ip, mask)) = get_tun_ip_mask() {
         ndmc(&format!("interface {} ip address {} {}", NDM_IF_NAME, ip, mask));
     }
+    if let Some(mtu) = get_tun_mtu() {
+        ndmc(&format!("interface {} ip mtu {}", NDM_IF_NAME, mtu));
+    }
 
     ndmc(&format!("interface {} ip global auto", NDM_IF_NAME));
+    ndmc(&format!("interface {} ip tcp adjust-mss pmtu", NDM_IF_NAME));
     ndmc(&format!("interface {} security-level public", NDM_IF_NAME));
     ndmc(&format!("interface {} up", NDM_IF_NAME));
 }
