@@ -315,6 +315,8 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
     }
 
     toml.push_str("\n[listener.tun]\n");
+    toml.push_str("bound_if = \"\"\n");
+    toml.push_str("change_system_dns = false\n");
     let included = if settings.included_routes.is_empty() && settings.vpn_mode == "general" {
         vec!["0.0.0.0/0".to_string(), "2000::/3".to_string()]
     } else {

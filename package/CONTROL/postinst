@@ -8,8 +8,8 @@ chmod 755 "$BIN_DIR/trusttunnel-keenetic" 2>/dev/null || true
 chmod 755 "$BIN_DIR/trusttunnel_client" 2>/dev/null || true
 chmod 755 "$BIN_DIR/setup_wizard" 2>/dev/null || true
 
-# Create init script if init.d exists
-if [ -d /opt/etc/init.d ] && [ ! -f /opt/etc/init.d/S50trusttunnel ]; then
+# Create/update init script if init.d exists
+if [ -d /opt/etc/init.d ]; then
     cat > /opt/etc/init.d/S50trusttunnel << 'INITEOF'
 #!/bin/sh
 NAME=trusttunnel-keenetic
@@ -33,7 +33,6 @@ case "$1" in
     iptables -t nat -D POSTROUTING -o OpkgTun0 -j MASQUERADE 2>/dev/null || true
     ip route del default dev OpkgTun0 2>/dev/null || true
     ndmc -c 'interface OpkgTun0 down' 2>/dev/null || true
-    ndmc -c 'no interface OpkgTun0' 2>/dev/null || true
     ip link del OpkgTun0 2>/dev/null || true
     ;;
   restart)
