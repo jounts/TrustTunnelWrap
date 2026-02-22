@@ -92,12 +92,40 @@ backup_existing_config() {
 }
 
 restore_config_if_needed() {
-  if [ -n "${BACKUP_PATH}" ] && [ -f "$BACKUP_PATH" ]; then
-    mkdir -p "/opt/etc/trusttunnel"
+  if [ -z "${BACKUP_PATH}" ] || [ ! -f "$BACKUP_PATH" ]; then
+    return 0
+  fi
+
+  mkdir -p "/opt/etc/trusttunnel"
+
+  # If package did not create config for some reason, restore backup directly.
+  if [ ! -f "$CONFIG_PATH" ]; then
     cp "$BACKUP_PATH" "$CONFIG_PATH"
     chmod 600 "$CONFIG_PATH" 2>/dev/null || true
-    log "Config restored to: $CONFIG_PATH"
+    log "Config restored from backup (no new template found): $CONFIG_PATH"
+    return 0
   fi
+
+  # Preserve new directives: merge NEW config with OLD values.
+  # jq expression `.[0] * .[1]` keeps keys from new template and overrides
+  # existing ones with user values from backup.
+  if command -v jq >/dev/null 2>&1; then
+    merged="/tmp/${PKG_NAME}-config-merged.json"
+    if jq -s '.[0] * .[1]' "$CONFIG_PATH" "$BACKUP_PATH" > "$merged"; then
+      cp "$merged" "$CONFIG_PATH"
+      rm -f "$merged"
+      chmod 600 "$CONFIG_PATH" 2>/dev/null || true
+      log "Config merged with backup (new directives preserved): $CONFIG_PATH"
+      return 0
+    fi
+    log "WARNING: jq merge failed, keeping new config. Backup saved at: $BACKUP_PATH"
+    return 0
+  fi
+
+  # Without jq we cannot safely deep-merge JSON in POSIX sh.
+  # Keep new config to avoid dropping directives and leave backup for manual merge.
+  log "WARNING: jq not found, keeping new config to preserve directives."
+  log "WARNING: previous config backup kept at: $BACKUP_PATH"
 }
 
 main() {

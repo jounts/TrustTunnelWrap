@@ -1,5 +1,6 @@
 mod auth;
 mod config;
+mod logger;
 mod logs;
 mod routing;
 mod tunnel;
@@ -35,22 +36,23 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp_secs()
-        .init();
+    let cfg = match WrapperConfig::load(&args.config) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Failed to load config: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(e) = logger::init(&cfg.logging) {
+        eprintln!("Failed to initialize logger: {}", e);
+        std::process::exit(1);
+    }
 
     log::info!(
         "trusttunnel-keenetic v{} starting",
         env!("TRUSTTUNNEL_VERSION")
     );
-
-    let cfg = match WrapperConfig::load(&args.config) {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("Failed to load config: {}", e);
-            std::process::exit(1);
-        }
-    };
 
     if args.test {
         println!("Configuration OK");

@@ -97,7 +97,11 @@ opkg install /tmp/trusttunnel.ipk
   },
   "logging": {
     "level": "info",
-    "max_lines": 500
+    "max_lines": 500,
+    "file_enabled": true,
+    "file_path": "/var/log/trusttunnel-keenetic/trusttunnel-keenetic.log",
+    "rotate_size": "10MB",
+    "rotate_keep": 3
   },
   "routing": {
     "enabled": true,
@@ -151,11 +155,14 @@ opkg install /tmp/trusttunnel.ipk
 ### Просмотр логов
 
 ```sh
-# Через syslog
-logread | grep trusttunnel
-
-# Через API
+# Через API (внутренний буфер + доступные системные источники)
 curl -H "Authorization: <token>" http://127.0.0.1:8080/api/logs
+
+# Через файл логов
+tail -f /var/log/trusttunnel-keenetic/trusttunnel-keenetic.log
+
+# Просмотр архивов ротации
+ls -lh /var/log/trusttunnel-keenetic/
 ```
 
 ## Архитектура
@@ -227,6 +234,10 @@ Wrapper управляет бинарником `trusttunnel_client` как до
 |---|---|---|---|
 | `level` | string | `"info"` | Уровень логирования wrapper |
 | `max_lines` | number | `500` | Размер кольцевого буфера логов |
+| `file_enabled` | bool | `true` | Включить запись логов wrapper в файл |
+| `file_path` | string | `"/var/log/trusttunnel-keenetic/trusttunnel-keenetic.log"` | Путь к основному лог-файлу |
+| `rotate_size` | string\|number | `"10MB"` | Порог ротации: байты (`1048576`) или с суффиксом (`512KB`, `10MB`, `1GB`) |
+| `rotate_keep` | number | `3` | Количество архивов ротации (`.1`, `.2`, `.3`) |
 
 ### Параметры маршрутизации (`routing`)
 

@@ -214,6 +214,35 @@ cargo fmt --check   # проверка
 cargo fmt           # автоформатирование
 ```
 
+### Логирование в файл и ротация
+
+Wrapper поддерживает запись логов в файл с ротацией по размеру.
+
+Параметры в `config.json`:
+
+```json
+"logging": {
+  "level": "info",
+  "max_lines": 500,
+  "file_enabled": true,
+  "file_path": "/var/log/trusttunnel-keenetic/trusttunnel-keenetic.log",
+  "rotate_size": "10MB",
+  "rotate_keep": 3
+}
+```
+
+Примечания:
+- `rotate_size` принимает и число байт (`1048576`), и строку с единицами (`512KB`, `10MB`, `1GB`)
+- при достижении лимита текущий файл становится `.1`, далее `.2`, `.3` и т.д.
+- убедитесь, что процесс имеет права записи в каталог из `file_path`
+
+Полезные команды на роутере:
+
+```sh
+tail -f /var/log/trusttunnel-keenetic/trusttunnel-keenetic.log
+ls -lh /var/log/trusttunnel-keenetic/
+```
+
 ## Установка/обновление на роутере
 
 Для установки последнего релиза на роутере используйте `scripts/install.sh`.
