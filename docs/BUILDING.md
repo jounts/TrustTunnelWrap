@@ -213,3 +213,27 @@ cargo clippy --all-targets
 cargo fmt --check   # проверка
 cargo fmt           # автоформатирование
 ```
+
+## Установка/обновление на роутере
+
+Для установки последнего релиза на роутере используйте `scripts/install.sh`.
+
+Скрипт:
+- определяет архитектуру роутера;
+- скачивает подходящий `.ipk` из latest release;
+- при наличии старой установки делает backup `/opt/etc/trusttunnel/config.json`;
+- удаляет старый пакет (`opkg remove trusttunnel-keenetic`);
+- устанавливает новый пакет и восстанавливает backup конфига.
+
+Запуск на роутере:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jounts/TrustTunnelWrap/main/scripts/install.sh | sh
+```
+
+Альтернатива через `wget`:
+
+```sh
+wget -O /tmp/install-trusttunnel.sh https://raw.githubusercontent.com/jounts/TrustTunnelWrap/main/scripts/install.sh
+sh /tmp/install-trusttunnel.sh
+```

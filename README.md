@@ -19,6 +19,28 @@ IPK-пакет для запуска [TrustTunnel VPN](https://github.com/TrustT
 
 ## Установка
 
+### Быстрая установка (рекомендуется)
+
+Установщик сам:
+- определит архитектуру роутера;
+- скачает подходящий `.ipk` из последнего релиза;
+- сделает backup текущего `/opt/etc/trusttunnel/config.json` (если пакет уже установлен);
+- удалит старую версию и установит новую;
+- восстановит конфиг из backup после установки.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/jounts/TrustTunnelWrap/main/scripts/install.sh | sh
+```
+
+Если `curl` недоступен:
+
+```sh
+wget -O /tmp/install-trusttunnel.sh https://raw.githubusercontent.com/jounts/TrustTunnelWrap/main/scripts/install.sh
+sh /tmp/install-trusttunnel.sh
+```
+
+### Ручная установка
+
 Скачайте `.ipk` для архитектуры вашего роутера со страницы [Releases](../../releases) и установите:
 
 ```sh
@@ -235,6 +257,11 @@ opkg remove trusttunnel-keenetic
 ```
 
 Конфигурация в `/opt/etc/trusttunnel/` сохраняется при удалении пакета.
+
+## Благодарности
+
+- [TrustTunnel VPN](https://github.com/TrustTunnel/TrustTunnelClient) — VPN-клиент, для которого создан этот менеджер
+- [TrustTunnel-Keenetic](https://github.com/artemevsevev/TrustTunnel-Keenetic) — проект, вдохновивший на создание этой обёртки
 
 ## Лицензия
 
