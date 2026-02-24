@@ -1,4 +1,5 @@
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 const TUN_NAME: &str = "tun0";
@@ -6,6 +7,10 @@ const OPKG_TUN_NAME: &str = "opkgtun0";
 const NDM_IF_NAME: &str = "OpkgTun0";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const NDM_READY_TIMEOUT: Duration = Duration::from_secs(10);
+const NDM_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
+const NDM_RETRY_BASE_DELAY_MS: u64 = 200;
+const NDM_MAX_ATTEMPTS: u32 = 10;
 
 fn run_cmd(program: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
@@ -74,17 +79,24 @@ fn find_ndmc() -> &'static str {
     "ndmc"
 }
 
-fn ndmc(cmd: &str) {
+fn ndmc_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn is_ndm_transient_error(message: &str) -> bool {
+    let m = message.to_ascii_lowercase();
+    m.contains("0xcffd0060")
+        || m.contains("failed to initialize")
+        || m.contains("temporarily unavailable")
+}
+
+fn ndmc_exec_once(cmd: &str) -> Result<String, String> {
     let bin = find_ndmc();
-    let output = match Command::new(bin).args(&["-c", cmd]).output() {
-        Ok(o) => o,
-        Err(e) => {
-            let msg = format!("[ndmc] exec '{}' error: {}", cmd, e);
-            log::warn!("{}", msg);
-            crate::logs::global_buffer().push(msg);
-            return;
-        }
-    };
+    let output = Command::new(bin)
+        .args(["-c", cmd])
+        .output()
+        .map_err(|e| format!("exec '{}' error: {}", cmd, e))?;
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     let combined = match (stdout.is_empty(), stderr.is_empty()) {
@@ -94,14 +106,92 @@ fn ndmc(cmd: &str) {
         (true, true) => String::new(),
     };
     if output.status.success() {
-        let msg = format!("[ndmc] ok: {} {}", cmd, combined);
-        log::info!("{}", msg);
-        crate::logs::global_buffer().push(msg);
+        Ok(combined)
     } else {
-        let msg = format!("[ndmc] '{}' exit={} {}", cmd, output.status.code().unwrap_or(-1), combined);
+        Err(format!(
+            "'{}' exit={} {}",
+            cmd,
+            output.status.code().unwrap_or(-1),
+            combined
+        ))
+    }
+}
+
+fn ndmc(cmd: &str) -> Result<String, String> {
+    let _guard = ndmc_lock().lock().unwrap();
+    let mut last_err = String::new();
+    for attempt in 1..=NDM_MAX_ATTEMPTS {
+        match ndmc_exec_once(cmd) {
+            Ok(output) => {
+                let msg = format!("[ndmc] ok: {} {}", cmd, output);
+                log::info!("{}", msg);
+                crate::logs::global_buffer().push(msg);
+                return Ok(output);
+            }
+            Err(err) => {
+                last_err = err;
+                let transient = is_ndm_transient_error(&last_err);
+                let msg = format!(
+                    "[ndmc] attempt {}/{} failed: {}",
+                    attempt, NDM_MAX_ATTEMPTS, last_err
+                );
+                log::warn!("{}", msg);
+                crate::logs::global_buffer().push(msg);
+                if transient && attempt < NDM_MAX_ATTEMPTS {
+                    let backoff = (NDM_RETRY_BASE_DELAY_MS * attempt as u64).min(1000);
+                    std::thread::sleep(Duration::from_millis(backoff));
+                    continue;
+                }
+                return Err(last_err);
+            }
+        }
+    }
+    Err(last_err)
+}
+
+fn wait_ndm_ready() -> Result<(), String> {
+    let start = std::time::Instant::now();
+    while start.elapsed() < NDM_READY_TIMEOUT {
+        match ndmc("show interface") {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                if !is_ndm_transient_error(&e) {
+                    return Err(format!("NDM check failed: {}", e));
+                }
+                std::thread::sleep(Duration::from_millis(250));
+            }
+        }
+    }
+    Err(format!(
+        "NDM is not ready after {}s",
+        NDM_READY_TIMEOUT.as_secs()
+    ))
+}
+
+fn verify_ndm_default_route() -> bool {
+    let start = std::time::Instant::now();
+    let cmd = format!("show interface {}", NDM_IF_NAME);
+    while start.elapsed() < NDM_VERIFY_TIMEOUT {
+        if let Ok(output) = ndmc(&cmd) {
+            if output.contains("defaultgw: yes") {
+                return true;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    false
+}
+
+fn ndmc_soft(cmd: &str) {
+    if let Err(e) = ndmc(cmd) {
+        let msg = format!("[ndmc] soft-fail: {}", e);
         log::warn!("{}", msg);
         crate::logs::global_buffer().push(msg);
     }
+}
+
+fn ndmc_required(cmd: &str) -> Result<(), String> {
+    ndmc(cmd).map(|_| ())
 }
 
 fn get_tun_ip_mask() -> Option<(String, String)> {
@@ -142,31 +232,46 @@ fn prefix_to_netmask(prefix: u8) -> String {
     )
 }
 
-fn register_ndm_interface() {
+fn register_ndm_interface() -> Result<(), String> {
+    wait_ndm_ready()?;
     let msg = format!("[routing] ensuring {} in NDM (ndmc={})", NDM_IF_NAME, find_ndmc());
     log::info!("{}", msg);
     crate::logs::global_buffer().push(msg);
 
-    ndmc(&format!("interface {}", NDM_IF_NAME));
+    // Usually idempotent; if interface already exists, continue.
+    ndmc_soft(&format!("interface {}", NDM_IF_NAME));
 
     if let Some((ip, mask)) = get_tun_ip_mask() {
-        ndmc(&format!("interface {} ip address {} {}", NDM_IF_NAME, ip, mask));
+        ndmc_required(&format!("interface {} ip address {} {}", NDM_IF_NAME, ip, mask))?;
     }
     if let Some(mtu) = get_tun_mtu() {
-        ndmc(&format!("interface {} ip mtu {}", NDM_IF_NAME, mtu));
+        ndmc_required(&format!("interface {} ip mtu {}", NDM_IF_NAME, mtu))?;
     }
 
-    ndmc(&format!("interface {} ip global auto", NDM_IF_NAME));
-    ndmc(&format!("interface {} ip tcp adjust-mss pmtu", NDM_IF_NAME));
-    ndmc(&format!("interface {} security-level public", NDM_IF_NAME));
-    ndmc(&format!("interface {} up", NDM_IF_NAME));
+    ndmc_required(&format!("interface {} ip global auto", NDM_IF_NAME))?;
+    ndmc_required(&format!("interface {} ip tcp adjust-mss pmtu", NDM_IF_NAME))?;
+    ndmc_required(&format!("interface {} security-level public", NDM_IF_NAME))?;
+    ndmc_required(&format!("interface {} up", NDM_IF_NAME))?;
+    Ok(())
 }
 
-fn set_ndm_default_routes() {
+fn set_ndm_default_routes() -> Result<(), String> {
     // Shell implementation uses interface-based default route.
-    ndmc(&format!("ip route default {}", NDM_IF_NAME));
-    // IPv6 default route is harmless to request even when IPv6 is disabled.
-    ndmc(&format!("ipv6 route default {}", NDM_IF_NAME));
+    ndmc_required(&format!("ip route default {}", NDM_IF_NAME))?;
+    // IPv6 default route can fail on some configs/firmware, do not fail whole setup.
+    ndmc_soft(&format!("ipv6 route default {}", NDM_IF_NAME));
+    Ok(())
+}
+
+fn assert_ndm_default_route() -> Result<(), String> {
+    if verify_ndm_default_route() {
+        Ok(())
+    } else {
+        Err(format!(
+            "NDM default route is not active for {} (defaultgw: no)",
+            NDM_IF_NAME
+        ))
+    }
 }
 
 fn wait_for_tun() -> bool {
@@ -204,7 +309,7 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     run_cmd("ip", &["link", "set", OPKG_TUN_NAME, "up"])?;
 
     // Register in NDM first — NDM may reconfigure iptables/routes on registration
-    register_ndm_interface();
+    register_ndm_interface()?;
 
     let wan_if = current_wan_interface().ok_or("failed to detect WAN interface")?;
     log::info!("[routing] WAN interface: {}", wan_if);
@@ -219,7 +324,8 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     }
 
     log::info!("[routing] setting default route via {}", OPKG_TUN_NAME);
-    set_ndm_default_routes();
+    set_ndm_default_routes()?;
+    assert_ndm_default_route()?;
 
     log::info!("[routing] setup complete (WAN={})", wan_if);
     crate::logs::global_buffer().push(format!("[routing] setup complete (WAN={})", wan_if));
