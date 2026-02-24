@@ -277,16 +277,19 @@ fn prefix_to_netmask(prefix: u8) -> String {
     )
 }
 
-fn register_ndm_interface() -> Result<(), String> {
+fn ensure_ndm_interface_object() -> Result<(), String> {
     wait_ndm_ready()?;
     let msg = format!("[routing] ensuring {} in NDM (ndmc={})", NDM_IF_NAME, find_ndmc());
     log::info!("{}", msg);
     crate::logs::global_buffer().push(msg);
 
-    // Must succeed (with retries) so subsequent IP commands can see the interface.
+    // Create NDM interface object first.
     ndmc_required(&format!("interface {}", NDM_IF_NAME))?;
     wait_ndm_interface_exists()?;
+    Ok(())
+}
 
+fn apply_ndm_interface_settings() -> Result<(), String> {
     if let Some((ip, mask)) = get_tun_ip_mask() {
         ndmc_required(&format!("interface {} ip address {} {}", NDM_IF_NAME, ip, mask))?;
     }
@@ -349,13 +352,17 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     // Remove stale opkgtun0 if leftover from a previous run
     run_cmd_ok("ip", &["link", "del", OPKG_TUN_NAME]);
 
+    // Create NDM object before Linux rename. On some Keenetic builds this avoids
+    // OpkgTun creation failure when opkgtun0 already exists.
+    ensure_ndm_interface_object()?;
+
     log::info!("[routing] renaming {} → {}", TUN_NAME, OPKG_TUN_NAME);
     run_cmd("ip", &["link", "set", TUN_NAME, "down"])?;
     run_cmd("ip", &["link", "set", TUN_NAME, "name", OPKG_TUN_NAME])?;
     run_cmd("ip", &["link", "set", OPKG_TUN_NAME, "up"])?;
 
-    // Register in NDM first — NDM may reconfigure iptables/routes on registration
-    register_ndm_interface()?;
+    // Apply runtime params after opkgtun0 exists and has IP/MTU.
+    apply_ndm_interface_settings()?;
 
     let wan_if = current_wan_interface().ok_or("failed to detect WAN interface")?;
     log::info!("[routing] WAN interface: {}", wan_if);
