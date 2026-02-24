@@ -155,13 +155,10 @@ fn ndmc(cmd: &str) -> Result<String, String> {
 fn wait_ndm_ready() -> Result<(), String> {
     let start = std::time::Instant::now();
     while start.elapsed() < NDM_READY_TIMEOUT {
-        // Probe a cheap command and treat "not found" as ready CLI.
-        match ndmc(&format!("show interface {}", NDM_IF_NAME)) {
+        // Probe NDM CLI readiness with a valid read-only command.
+        match ndmc("show interface") {
             Ok(_) => return Ok(()),
             Err(e) => {
-                if e.to_ascii_lowercase().contains("unable to find") {
-                    return Ok(());
-                }
                 if !is_ndm_transient_error(&e) {
                     return Err(format!("NDM check failed: {}", e));
                 }
@@ -177,10 +174,9 @@ fn wait_ndm_ready() -> Result<(), String> {
 
 fn verify_ndm_default_route() -> bool {
     let start = std::time::Instant::now();
-    let cmd = format!("show interface {}", NDM_IF_NAME);
     while start.elapsed() < NDM_VERIFY_TIMEOUT {
-        if let Ok(output) = ndmc(&cmd) {
-            if output.contains("defaultgw: yes") {
+        if let Ok(output) = ndmc("show interface") {
+            if interface_defaultgw_is_yes(&output, NDM_IF_NAME) {
                 return true;
             }
         }
@@ -189,12 +185,38 @@ fn verify_ndm_default_route() -> bool {
     false
 }
 
+fn interface_exists_in_show_output(show_output: &str, if_name: &str) -> bool {
+    let needle = format!("id: {}", if_name);
+    show_output.lines().any(|l| l.trim() == needle)
+}
+
+fn interface_defaultgw_is_yes(show_output: &str, if_name: &str) -> bool {
+    let needle = format!("id: {}", if_name);
+    let mut in_target = false;
+    for raw in show_output.lines() {
+        let line = raw.trim();
+        if line.starts_with("id: ") {
+            if in_target {
+                // New interface block started; target block ended.
+                return false;
+            }
+            in_target = line == needle;
+            continue;
+        }
+        if in_target && line == "defaultgw: yes" {
+            return true;
+        }
+    }
+    false
+}
+
 fn wait_ndm_interface_exists() -> Result<(), String> {
     let start = std::time::Instant::now();
-    let cmd = format!("show interface {}", NDM_IF_NAME);
     while start.elapsed() < NDM_IF_WAIT_TIMEOUT {
-        if ndmc(&cmd).is_ok() {
-            return Ok(());
+        if let Ok(output) = ndmc("show interface") {
+            if interface_exists_in_show_output(&output, NDM_IF_NAME) {
+                return Ok(());
+            }
         }
         std::thread::sleep(Duration::from_millis(250));
     }
