@@ -11,6 +11,8 @@ const OPKG_TUN_NAME: &str = "opkgtun0";
 const NDM_IF_NAME: &str = "OpkgTun0";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const TUN_RENAME_RETRY_TIMEOUT: Duration = Duration::from_secs(3);
+const TUN_RENAME_RETRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const NDM_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
 const NDM_RETRY_BASE_DELAY_MS: u64 = 200;
 const NDM_MAX_ATTEMPTS: u32 = 10;
@@ -330,6 +332,17 @@ fn wait_for_tun() -> bool {
     false
 }
 
+fn wait_for_tun_retry() -> bool {
+    let start = std::time::Instant::now();
+    while start.elapsed() < TUN_RENAME_RETRY_TIMEOUT {
+        if std::path::Path::new(&format!("/sys/class/net/{}", TUN_NAME)).exists() {
+            return true;
+        }
+        std::thread::sleep(TUN_RENAME_RETRY_POLL_INTERVAL);
+    }
+    false
+}
+
 /// Configure interface + NDM routing after the VPN client creates tun0.
 /// Renames tun0 → opkgtun0 and sets default route via NDM.
 /// Returns the detected WAN interface name on success.
@@ -365,11 +378,20 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
                     std::path::Path::new(&format!("/sys/class/net/{}", OPKG_TUN_NAME)).exists();
                 if e.to_ascii_lowercase().contains("file exists") && opkg_now_exists {
                     let msg = format!(
-                        "[routing] {} already exists, continuing: {}",
-                        OPKG_TUN_NAME, e
+                        "[routing] {} already exists, recreating from {}: {}",
+                        OPKG_TUN_NAME, TUN_NAME, e
                     );
                     log::warn!("{}", msg);
                     crate::logs::global_buffer().push(msg);
+                    run_cmd_ok("ip", &["link", "set", OPKG_TUN_NAME, "down"]);
+                    run_cmd_ok("ip", &["link", "del", OPKG_TUN_NAME]);
+                    if !wait_for_tun_retry() {
+                        return Err(format!(
+                            "{} disappeared before rename retry after {} conflict",
+                            TUN_NAME, OPKG_TUN_NAME
+                        ));
+                    }
+                    run_cmd("ip", &["link", "set", TUN_NAME, "name", OPKG_TUN_NAME])?;
                 } else {
                     return Err(e);
                 }
