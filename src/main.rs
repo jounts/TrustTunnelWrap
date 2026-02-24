@@ -48,6 +48,7 @@ fn main() {
         eprintln!("Failed to initialize logger: {}", e);
         std::process::exit(1);
     }
+    logs::init_global_buffer(cfg.logging.max_lines);
 
     log::info!(
         "trusttunnel-keenetic v{} starting",
@@ -57,10 +58,7 @@ fn main() {
     if args.test {
         println!("Configuration OK");
         println!("Endpoint hostname: {}", cfg.tunnel.hostname);
-        println!(
-            "Endpoint addresses: {}",
-            cfg.tunnel.addresses.join(", ")
-        );
+        println!("Endpoint addresses: {}", cfg.tunnel.addresses.join(", "));
         println!("Protocol: {}", cfg.tunnel.upstream_protocol);
         println!("VPN mode: {}", cfg.tunnel.vpn_mode);
         println!("WebUI port: {}", cfg.webui.port);
@@ -106,58 +104,66 @@ fn main() {
     };
     log::info!("NDM API endpoint: {}:{}", ndm_host, cfg.webui.ndm_port);
 
-    let web = webui::WebUI::new(
-        tunnel,
-        config,
-        args.config,
-        ndm_host,
-        cfg.webui.ndm_port,
-    );
+    let web = webui::WebUI::new(tunnel, config, args.config, ndm_host, cfg.webui.ndm_port);
     web.run(&cfg.webui.bind, cfg.webui.port);
 }
 
 fn daemonize() {
-    use nix::unistd::{fork, setsid, ForkResult};
+    #[cfg(unix)]
+    {
+        use nix::unistd::{fork, setsid, ForkResult};
 
-    match unsafe { fork() } {
-        Ok(ForkResult::Parent { .. }) => {
-            std::process::exit(0);
-        }
-        Ok(ForkResult::Child) => {
-            let _ = setsid();
-            let _ = nix::unistd::chdir("/");
-            // Redirect stdio to /dev/null
-            let devnull =
-                std::fs::OpenOptions::new()
+        match unsafe { fork() } {
+            Ok(ForkResult::Parent { .. }) => {
+                std::process::exit(0);
+            }
+            Ok(ForkResult::Child) => {
+                let _ = setsid();
+                let _ = nix::unistd::chdir("/");
+                // Redirect stdio to /dev/null
+                let devnull = std::fs::OpenOptions::new()
                     .read(true)
                     .write(true)
                     .open("/dev/null");
-            if let Ok(f) = devnull {
-                use std::os::unix::io::AsRawFd;
-                let fd = f.as_raw_fd();
-                let _ = nix::unistd::dup2(fd, 0);
-                let _ = nix::unistd::dup2(fd, 1);
-                let _ = nix::unistd::dup2(fd, 2);
+                if let Ok(f) = devnull {
+                    use std::os::unix::io::AsRawFd;
+                    let fd = f.as_raw_fd();
+                    let _ = nix::unistd::dup2(fd, 0);
+                    let _ = nix::unistd::dup2(fd, 1);
+                    let _ = nix::unistd::dup2(fd, 2);
+                }
+            }
+            Err(e) => {
+                log::error!("Fork failed: {}", e);
+                std::process::exit(1);
             }
         }
-        Err(e) => {
-            log::error!("Fork failed: {}", e);
-            std::process::exit(1);
-        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        log::warn!("--daemon is only supported on Unix-like systems");
     }
 }
 
 fn ctrlc_handler(tunnel: Arc<tunnel::TunnelManager>) {
-    let _ = std::thread::Builder::new()
-        .name("signal-handler".into())
-        .spawn(move || {
-            // Block on SIGTERM/SIGINT
-            let mut mask = nix::sys::signal::SigSet::empty();
-            mask.add(nix::sys::signal::Signal::SIGTERM);
-            mask.add(nix::sys::signal::Signal::SIGINT);
-            let _ = mask.thread_block();
+    #[cfg(unix)]
+    {
+        use nix::sys::signal::{pthread_sigmask, SigSet, SigmaskHow, Signal};
 
-            loop {
+        // Block signals in the main thread before worker threads are started.
+        // New threads inherit the mask; a dedicated waiter thread handles shutdown.
+        let mut mask = SigSet::empty();
+        mask.add(Signal::SIGTERM);
+        mask.add(Signal::SIGINT);
+        if let Err(e) = pthread_sigmask(SigmaskHow::SIG_BLOCK, Some(&mask), None) {
+            log::error!("Failed to install signal mask: {}", e);
+            return;
+        }
+
+        let _ = std::thread::Builder::new()
+            .name("signal-handler".into())
+            .spawn(move || loop {
                 match mask.wait() {
                     Ok(sig) => {
                         log::info!("Received signal {:?}, shutting down...", sig);
@@ -166,6 +172,11 @@ fn ctrlc_handler(tunnel: Arc<tunnel::TunnelManager>) {
                     }
                     Err(_) => continue,
                 }
-            }
-        });
+            });
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = tunnel;
+    }
 }

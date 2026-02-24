@@ -39,10 +39,7 @@ pub struct TunnelManager {
 }
 
 impl TunnelManager {
-    pub fn new(
-        settings: TunnelSettings,
-        routing: &crate::config::RoutingSettings,
-    ) -> Arc<Self> {
+    pub fn new(settings: TunnelSettings, routing: &crate::config::RoutingSettings) -> Arc<Self> {
         Arc::new(Self {
             settings: Mutex::new(settings),
             status: Mutex::new(TunnelStatus::default()),
@@ -84,11 +81,9 @@ impl TunnelManager {
         let toml_content = generate_client_toml(&settings);
 
         if let Some(parent) = std::path::Path::new(CLIENT_TOML).parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("mkdir failed: {}", e))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
         }
-        std::fs::write(CLIENT_TOML, toml_content)
-            .map_err(|e| format!("write toml failed: {}", e))
+        std::fs::write(CLIENT_TOML, toml_content).map_err(|e| format!("write toml failed: {}", e))
     }
 
     fn spawn_process(&self) -> Result<(), String> {
@@ -134,8 +129,12 @@ impl TunnelManager {
         drop(settings);
 
         self.should_stop.store(false, Ordering::SeqCst);
+        if let Err(e) = self.spawn_process() {
+            self.running.store(false, Ordering::SeqCst);
+            self.should_stop.store(false, Ordering::SeqCst);
+            return Err(e);
+        }
         self.running.store(true, Ordering::SeqCst);
-        self.spawn_process()?;
         self.spawn_routing_setup();
         Ok(())
     }
@@ -200,11 +199,14 @@ impl TunnelManager {
             let pid = child.id();
             log::info!("Stopping tunnel (PID: {})", pid);
 
-            // Try SIGTERM first
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGTERM,
-            );
+            // Try graceful termination first on Unix.
+            #[cfg(unix)]
+            {
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid as i32),
+                    nix::sys::signal::Signal::SIGTERM,
+                );
+            }
 
             // Wait up to 5 seconds
             for _ in 0..50 {
@@ -263,7 +265,10 @@ impl TunnelManager {
     }
 
     fn reroute(&self, new_wan: &str) {
-        let msg = format!("[watchdog] WAN changed → {}, updating server routes", new_wan);
+        let msg = format!(
+            "[watchdog] WAN changed → {}, updating server routes",
+            new_wan
+        );
         log::info!("{}", msg);
         logs::global_buffer().push(msg);
 
@@ -292,11 +297,7 @@ impl TunnelManager {
         if let Some(current_wan) = routing::current_wan_interface() {
             let saved_wan = self.last_wan_interface.lock().unwrap().clone();
             if !saved_wan.is_empty() && current_wan != saved_wan {
-                log::warn!(
-                    "[watchdog] WAN changed: {} -> {}",
-                    saved_wan,
-                    current_wan
-                );
+                log::warn!("[watchdog] WAN changed: {} -> {}", saved_wan, current_wan);
                 self.reroute(&current_wan);
                 return;
             }
@@ -340,10 +341,8 @@ impl TunnelManager {
                 if let Some(ref mut child) = *child_lock {
                     match child.try_wait() {
                         Ok(Some(exit)) => {
-                            let msg = format!(
-                                "[tunnel] process exited: {}",
-                                exit.code().unwrap_or(-1)
-                            );
+                            let msg =
+                                format!("[tunnel] process exited: {}", exit.code().unwrap_or(-1));
                             log::warn!("{}", msg);
                             logs::global_buffer().push(msg.clone());
                             {

@@ -29,8 +29,7 @@
   },
   "webui": {
     "port": 8080,
-    "bind": "0.0.0.0",
-    "auth": true
+    "bind": "0.0.0.0"
   },
   "logging": {
     "level": "info",

@@ -100,7 +100,6 @@ opkg install /tmp/trusttunnel.ipk
   "webui": {
     "port": 8080,
     "bind": "0.0.0.0",
-    "auth": true,
     "ndm_host": "",
     "ndm_port": 80
   },
@@ -244,7 +243,6 @@ Wrapper управляет бинарником `trusttunnel_client` как до
 |---|---|---|---|
 | `port` | number | `8080` | Порт HTTP-сервера |
 | `bind` | string | `"0.0.0.0"` | Адрес привязки |
-| `auth` | bool | `true` | Требовать авторизацию |
 | `ndm_host` | string | `""` | Хост NDM API (если пусто — автоопределение LAN IP) |
 | `ndm_port` | number | `80` | Порт NDM API |
 

@@ -41,6 +41,10 @@ impl LogBuffer {
 
 static GLOBAL_BUFFER: OnceLock<LogBuffer> = OnceLock::new();
 
+pub fn init_global_buffer(max_lines: usize) {
+    let _ = GLOBAL_BUFFER.set(LogBuffer::new(max_lines.max(1)));
+}
+
 pub fn global_buffer() -> &'static LogBuffer {
     GLOBAL_BUFFER.get_or_init(|| LogBuffer::new(500))
 }
@@ -51,10 +55,7 @@ pub fn read_syslog(limit: usize) -> Vec<String> {
         "logread 2>/dev/null | grep -i trusttunnel | tail -n {}",
         limit
     );
-    match std::process::Command::new("sh")
-        .args(["-c", &cmd])
-        .output()
-    {
+    match std::process::Command::new("sh").args(["-c", &cmd]).output() {
         Ok(output) => {
             let text = String::from_utf8_lossy(&output.stdout);
             text.lines()

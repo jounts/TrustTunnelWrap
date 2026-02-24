@@ -23,8 +23,7 @@ pub fn init(settings: &LogSettings) -> Result<(), String> {
         file: Mutex::new(file_writer),
     };
 
-    log::set_boxed_logger(Box::new(logger))
-        .map_err(|e| format!("failed to set logger: {}", e))?;
+    log::set_boxed_logger(Box::new(logger)).map_err(|e| format!("failed to set logger: {}", e))?;
     log::set_max_level(level);
     Ok(())
 }
@@ -106,11 +105,7 @@ impl RotatingFile {
         let line_bytes = line.as_bytes();
         let required = line_bytes.len() as u64 + 1;
 
-        let current_size = self
-            .file
-            .metadata()
-            .map(|m| m.len())
-            .unwrap_or(0);
+        let current_size = self.file.metadata().map(|m| m.len()).unwrap_or(0);
         if self.rotate_keep > 0 && current_size.saturating_add(required) > self.rotate_size {
             self.rotate()?;
         }

@@ -1,6 +1,10 @@
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use std::{
+    io::ErrorKind,
+    net::{IpAddr, SocketAddr},
+};
 
 const TUN_NAME: &str = "tun0";
 const OPKG_TUN_NAME: &str = "opkgtun0";
@@ -54,18 +58,48 @@ pub fn current_wan_interface() -> Option<String> {
     None
 }
 
-fn extract_server_ips(addresses: &[String]) -> Vec<String> {
+fn parse_endpoint_ip(raw: &str) -> Option<IpAddr> {
+    if let Ok(sock) = raw.parse::<SocketAddr>() {
+        return Some(sock.ip());
+    }
+    if let Ok(ip) = raw.parse::<IpAddr>() {
+        return Some(ip);
+    }
+    if let Some((host, _)) = raw.rsplit_once(':') {
+        if let Ok(ip) = host.parse::<IpAddr>() {
+            return Some(ip);
+        }
+    }
+    None
+}
+
+fn extract_server_ips(addresses: &[String]) -> Vec<IpAddr> {
     addresses
         .iter()
-        .filter_map(|addr| {
-            let ip = addr.split(':').next()?;
-            if ip.parse::<std::net::IpAddr>().is_ok() {
-                Some(ip.to_string())
-            } else {
-                None
-            }
-        })
+        .filter_map(|addr| parse_endpoint_ip(addr))
         .collect()
+}
+
+fn delete_server_host_route(ip: IpAddr) {
+    match ip {
+        IpAddr::V4(v4) => run_cmd_ok("ip", &["route", "del", &format!("{}/32", v4)]),
+        IpAddr::V6(v6) => run_cmd_ok("ip", &["-6", "route", "del", &format!("{}/128", v6)]),
+    }
+}
+
+fn add_server_host_route(ip: IpAddr, wan_if: &str) -> Result<(), String> {
+    match ip {
+        IpAddr::V4(v4) => run_cmd(
+            "ip",
+            &["route", "add", &format!("{}/32", v4), "dev", wan_if],
+        )
+        .map(|_| ()),
+        IpAddr::V6(v6) => run_cmd(
+            "ip",
+            &["-6", "route", "add", &format!("{}/128", v6), "dev", wan_if],
+        )
+        .map(|_| ()),
+    }
 }
 
 fn find_ndmc() -> &'static str {
@@ -169,10 +203,12 @@ fn verify_kernel_default_route_via_opkgtun() -> bool {
     let start = std::time::Instant::now();
     while start.elapsed() < NDM_VERIFY_TIMEOUT {
         if let Ok(out) = run_cmd("ip", &["-o", "route", "show", "default"]) {
-            if out
-                .lines()
-                .any(|line| line.split_whitespace().collect::<Vec<_>>().windows(2).any(|w| w == ["dev", OPKG_TUN_NAME]))
-            {
+            if out.lines().any(|line| {
+                line.split_whitespace()
+                    .collect::<Vec<_>>()
+                    .windows(2)
+                    .any(|w| w == ["dev", OPKG_TUN_NAME])
+            }) {
                 return true;
             }
         }
@@ -232,7 +268,11 @@ fn prefix_to_netmask(prefix: u8) -> String {
 }
 
 fn ensure_ndm_interface_object() -> Result<(), String> {
-    let msg = format!("[routing] ensuring {} in NDM (ndmc={})", NDM_IF_NAME, find_ndmc());
+    let msg = format!(
+        "[routing] ensuring {} in NDM (ndmc={})",
+        NDM_IF_NAME,
+        find_ndmc()
+    );
     log::info!("{}", msg);
     crate::logs::global_buffer().push(msg);
 
@@ -244,7 +284,10 @@ fn ensure_ndm_interface_object() -> Result<(), String> {
 
 fn apply_ndm_interface_settings() -> Result<(), String> {
     if let Some((ip, mask)) = get_tun_ip_mask() {
-        ndmc_required(&format!("interface {} ip address {} {}", NDM_IF_NAME, ip, mask))?;
+        ndmc_required(&format!(
+            "interface {} ip address {} {}",
+            NDM_IF_NAME, ip, mask
+        ))?;
     }
     if let Some(mtu) = get_tun_mtu() {
         ndmc_required(&format!("interface {} ip mtu {}", NDM_IF_NAME, mtu))?;
@@ -356,10 +399,9 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
 
     // Route VPN-server traffic through WAN to avoid a routing loop
     for ip in extract_server_ips(server_addresses) {
-        let cidr = format!("{}/32", ip);
-        run_cmd_ok("ip", &["route", "del", &cidr]);
-        if let Err(e) = run_cmd("ip", &["route", "add", &cidr, "dev", &wan_if]) {
-            log::warn!("[routing] server route {}: {}", cidr, e);
+        delete_server_host_route(ip);
+        if let Err(e) = add_server_host_route(ip, &wan_if) {
+            log::warn!("[routing] server route {}: {}", ip, e);
         }
     }
 
@@ -377,10 +419,9 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
 pub fn reroute_server_via_wan(server_addresses: &[String], new_wan: &str) {
     log::info!("[routing] re-routing server IPs via {}", new_wan);
     for ip in extract_server_ips(server_addresses) {
-        let cidr = format!("{}/32", ip);
-        run_cmd_ok("ip", &["route", "del", &cidr]);
-        if let Err(e) = run_cmd("ip", &["route", "add", &cidr, "dev", new_wan]) {
-            log::warn!("[routing] server route {} via {}: {}", cidr, new_wan, e);
+        delete_server_host_route(ip);
+        if let Err(e) = add_server_host_route(ip, new_wan) {
+            log::warn!("[routing] server route {} via {}: {}", ip, new_wan, e);
         }
     }
     let msg = format!("[routing] server routes updated to WAN={}", new_wan);
@@ -416,8 +457,22 @@ pub fn check_connectivity(check_url: &str, timeout: Duration) -> bool {
     match run_cmd("curl", &args) {
         Ok(_) => true,
         Err(e) => {
-            log::debug!("[routing] connectivity probe failed: {}", e);
-            false
+            let cmd_missing = std::io::Error::last_os_error().kind() == ErrorKind::NotFound
+                || e.contains("not found")
+                || e.contains("No such file or directory");
+            if cmd_missing {
+                match ureq::get(check_url).timeout(timeout).call() {
+                    Ok(resp) => (200..500).contains(&resp.status()),
+                    Err(ureq::Error::Status(code, _)) => (200..500).contains(&code),
+                    Err(err) => {
+                        log::debug!("[routing] fallback probe failed: {}", err);
+                        false
+                    }
+                }
+            } else {
+                log::debug!("[routing] connectivity probe failed: {}", e);
+                false
+            }
         }
     }
 }
@@ -429,7 +484,7 @@ pub fn teardown_routing(server_addresses: &[String]) {
     log::info!("[routing] tearing down ...");
 
     for ip in extract_server_ips(server_addresses) {
-        run_cmd_ok("ip", &["route", "del", &format!("{}/32", ip)]);
+        delete_server_host_route(ip);
     }
 
     // Shell behavior: bring interface down and recreate it on next start.

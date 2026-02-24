@@ -79,8 +79,6 @@ pub struct WebUISettings {
     pub port: u16,
     #[serde(default = "default_bind")]
     pub bind: String,
-    #[serde(default = "default_true")]
-    pub auth: bool,
     #[serde(default)]
     pub ndm_host: String,
     #[serde(default = "default_ndm_port")]
@@ -135,30 +133,64 @@ impl Default for RoutingSettings {
     }
 }
 
-fn default_watchdog_interval() -> u64 { 30 }
-fn default_watchdog_failures() -> u32 { 3 }
+fn default_watchdog_interval() -> u64 {
+    30
+}
+fn default_watchdog_failures() -> u32 {
+    3
+}
 fn default_watchdog_check_url() -> String {
     "http://connectivitycheck.gstatic.com/generate_204".into()
 }
-fn default_watchdog_check_timeout() -> u64 { 5 }
+fn default_watchdog_check_timeout() -> u64 {
+    5
+}
 
-fn default_upstream_protocol() -> String { "http2".into() }
-fn default_vpn_mode() -> String { "general".into() }
-fn default_mtu() -> u16 { 1280 }
-fn default_reconnect_delay() -> u64 { 5 }
-fn default_loglevel() -> String { "info".into() }
-fn default_port() -> u16 { 8080 }
-fn default_bind() -> String { "0.0.0.0".into() }
-fn default_true() -> bool { true }
-fn default_false() -> bool { false }
-fn default_max_lines() -> usize { 500 }
-fn default_ndm_port() -> u16 { 80 }
-fn default_file_enabled() -> bool { true }
+fn default_upstream_protocol() -> String {
+    "http2".into()
+}
+fn default_vpn_mode() -> String {
+    "general".into()
+}
+fn default_mtu() -> u16 {
+    1280
+}
+fn default_reconnect_delay() -> u64 {
+    5
+}
+fn default_loglevel() -> String {
+    "info".into()
+}
+fn default_port() -> u16 {
+    8080
+}
+fn default_bind() -> String {
+    "0.0.0.0".into()
+}
+fn default_true() -> bool {
+    true
+}
+fn default_false() -> bool {
+    false
+}
+fn default_max_lines() -> usize {
+    500
+}
+fn default_ndm_port() -> u16 {
+    80
+}
+fn default_file_enabled() -> bool {
+    true
+}
 fn default_log_file_path() -> String {
     "/var/log/trusttunnel-keenetic/trusttunnel-keenetic.log".into()
 }
-fn default_rotate_size_bytes() -> u64 { 512 * 1024 }
-fn default_rotate_keep() -> usize { 1 }
+fn default_rotate_size_bytes() -> u64 {
+    512 * 1024
+}
+fn default_rotate_keep() -> usize {
+    1
+}
 
 fn parse_size_with_units(value: &str) -> Option<u64> {
     let trimmed = value.trim();
@@ -258,7 +290,6 @@ impl Default for WebUISettings {
         Self {
             port: default_port(),
             bind: default_bind(),
-            auth: true,
             ndm_host: String::new(),
             ndm_port: default_ndm_port(),
         }
@@ -278,7 +309,6 @@ impl Default for LogSettings {
     }
 }
 
-
 impl WrapperConfig {
     pub fn load(path: &str) -> Result<Self, String> {
         if !Path::new(path).exists() {
@@ -287,19 +317,16 @@ impl WrapperConfig {
         }
         let content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config {}: {}", path, e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))
     }
 
     pub fn save(&self, path: &str) -> Result<(), String> {
         if let Some(parent) = Path::new(path).parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create dir: {}", e))?;
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
         }
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        fs::write(path, content)
-            .map_err(|e| format!("Failed to write config: {}", e))
+        fs::write(path, content).map_err(|e| format!("Failed to write config: {}", e))
     }
 }
 
