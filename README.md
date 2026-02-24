@@ -76,14 +76,23 @@ opkg install /tmp/trusttunnel.ipk
     "password": "mypassword",
     "upstream_protocol": "http2",
     "certificate": "",
+    "has_ipv6": true,
+    "client_random": "",
     "vpn_mode": "general",
     "dns_upstreams": ["tls://1.1.1.1"],
     "killswitch_enabled": false,
+    "killswitch_allow_ports": [],
+    "post_quantum_group_enabled": true,
+    "exclusions": [],
     "included_routes": ["0.0.0.0/0", "2000::/3"],
     "excluded_routes": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
     "mtu_size": 1280,
+    "bound_if": "",
+    "change_system_dns": false,
     "anti_dpi": false,
     "socks_address": "",
+    "socks_username": "",
+    "socks_password": "",
     "skip_verification": false,
     "reconnect_delay": 5,
     "loglevel": "info"
@@ -91,7 +100,6 @@ opkg install /tmp/trusttunnel.ipk
   "webui": {
     "port": 8080,
     "bind": "0.0.0.0",
-    "auth": true,
     "ndm_host": "",
     "ndm_port": 80
   },
@@ -184,7 +192,7 @@ trusttunnel-keenetic (wrapper, Rust)
         ├── Запуск процесса trusttunnel_client --config <path>
         ├── Мониторинг и авто-переподключение
         ├── Watchdog (проверка tun/WAN/connectivity)
-        ├── Настройка маршрутов и NAT (iptables + ndmc)
+        ├── Настройка маршрутов через NDM (ndmc)
         └── Graceful shutdown (SIGTERM → SIGKILL)
 ```
 
@@ -208,14 +216,23 @@ Wrapper управляет бинарником `trusttunnel_client` как до
 | `password` | string | `""` | Пароль |
 | `upstream_protocol` | string | `"http2"` | Протокол: `http2` или `http3` |
 | `certificate` | string | `""` | PEM-сертификат endpoint (опционально) |
+| `has_ipv6` | bool | `true` | Разрешить маршрутизацию IPv6 через endpoint |
+| `client_random` | string | `""` | Префикс/маска TLS ClientHello random (`hex[/mask]`) |
 | `vpn_mode` | string | `"general"` | Режим: `general` (весь трафик) или `selective` |
 | `dns_upstreams` | string[] | `["tls://1.1.1.1"]` | DNS-серверы через VPN |
 | `killswitch_enabled` | bool | `false` | Блокировка трафика вне VPN |
+| `killswitch_allow_ports` | number[] | `[]` | Локальные порты, разрешённые при активном killswitch |
+| `post_quantum_group_enabled` | bool | `true` | Включение post-quantum key exchange в TLS |
+| `exclusions` | string[] | `[]` | Домены/IP/CIDR для special-routing по `vpn_mode` |
 | `included_routes` | string[] | `["0.0.0.0/0", "2000::/3"]` | Маршруты через VPN |
 | `excluded_routes` | string[] | `["10.0.0.0/8", ...]` | Маршруты в обход VPN |
 | `mtu_size` | number | `1280` | MTU туннельного интерфейса |
+| `bound_if` | string | `""` | Интерфейс исходящих подключений клиента (`""` = auto) |
+| `change_system_dns` | bool | `false` | Разрешить клиенту менять системные DNS |
 | `anti_dpi` | bool | `false` | Включение anti-DPI режима клиента |
 | `socks_address` | string | `""` | Адрес SOCKS5 прокси (если нужен) |
+| `socks_username` | string | `""` | Логин SOCKS5 (опционально) |
+| `socks_password` | string | `""` | Пароль SOCKS5 (опционально) |
 | `skip_verification` | bool | `false` | Пропуск проверки сертификата |
 | `reconnect_delay` | number | `5` | Задержка переподключения (секунды) |
 | `loglevel` | string | `"info"` | Уровень: `error`, `warn`, `info`, `debug`, `trace` |
@@ -226,7 +243,6 @@ Wrapper управляет бинарником `trusttunnel_client` как до
 |---|---|---|---|
 | `port` | number | `8080` | Порт HTTP-сервера |
 | `bind` | string | `"0.0.0.0"` | Адрес привязки |
-| `auth` | bool | `true` | Требовать авторизацию |
 | `ndm_host` | string | `""` | Хост NDM API (если пусто — автоопределение LAN IP) |
 | `ndm_port` | number | `80` | Порт NDM API |
 
@@ -245,12 +261,16 @@ Wrapper управляет бинарником `trusttunnel_client` как до
 
 | Параметр | Тип | По умолчанию | Описание |
 |---|---|---|---|
-| `enabled` | bool | `true` | Включить настройку маршрутов/iptables при подключении |
+| `enabled` | bool | `true` | Включить настройку маршрутов через NDM при подключении |
 | `watchdog_enabled` | bool | `true` | Включить watchdog проверки туннеля |
 | `watchdog_interval` | number | `30` | Интервал watchdog-проверок (секунды) |
 | `watchdog_failures` | number | `3` | Порог неудачных проверок до рестарта |
 | `watchdog_check_url` | string | `"http://connectivitycheck.gstatic.com/generate_204"` | URL для HTTP health-check через `OpkgTun0` |
 | `watchdog_check_timeout` | number | `5` | Таймаут проверки связности (секунды) |
+
+Примечание по интерфейсам в Keenetic:
+- Linux-интерфейс: `opkgtun0` (lowercase), его видно в `ip link`/`ip -s link`.
+- NDM-интерфейс: `OpkgTun0` (CamelCase), его видно в `ndmc -c 'show interface'`.
 
 ## API
 

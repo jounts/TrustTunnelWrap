@@ -26,6 +26,7 @@ pub struct TunnelManager {
     connect_time: Mutex<Option<Instant>>,
     routing_enabled: bool,
     routing_active: Arc<AtomicBool>,
+    routing_setup_in_progress: Arc<AtomicBool>,
     // watchdog
     watchdog_enabled: bool,
     watchdog_interval: Duration,
@@ -38,10 +39,7 @@ pub struct TunnelManager {
 }
 
 impl TunnelManager {
-    pub fn new(
-        settings: TunnelSettings,
-        routing: &crate::config::RoutingSettings,
-    ) -> Arc<Self> {
+    pub fn new(settings: TunnelSettings, routing: &crate::config::RoutingSettings) -> Arc<Self> {
         Arc::new(Self {
             settings: Mutex::new(settings),
             status: Mutex::new(TunnelStatus::default()),
@@ -51,6 +49,7 @@ impl TunnelManager {
             connect_time: Mutex::new(None),
             routing_enabled: routing.enabled,
             routing_active: Arc::new(AtomicBool::new(false)),
+            routing_setup_in_progress: Arc::new(AtomicBool::new(false)),
             watchdog_enabled: routing.watchdog_enabled,
             watchdog_interval: Duration::from_secs(routing.watchdog_interval),
             watchdog_max_failures: routing.watchdog_failures,
@@ -82,11 +81,9 @@ impl TunnelManager {
         let toml_content = generate_client_toml(&settings);
 
         if let Some(parent) = std::path::Path::new(CLIENT_TOML).parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("mkdir failed: {}", e))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
         }
-        std::fs::write(CLIENT_TOML, toml_content)
-            .map_err(|e| format!("write toml failed: {}", e))
+        std::fs::write(CLIENT_TOML, toml_content).map_err(|e| format!("write toml failed: {}", e))
     }
 
     fn spawn_process(&self) -> Result<(), String> {
@@ -132,8 +129,12 @@ impl TunnelManager {
         drop(settings);
 
         self.should_stop.store(false, Ordering::SeqCst);
+        if let Err(e) = self.spawn_process() {
+            self.running.store(false, Ordering::SeqCst);
+            self.should_stop.store(false, Ordering::SeqCst);
+            return Err(e);
+        }
         self.running.store(true, Ordering::SeqCst);
-        self.spawn_process()?;
         self.spawn_routing_setup();
         Ok(())
     }
@@ -142,11 +143,20 @@ impl TunnelManager {
         if !self.routing_enabled {
             return;
         }
+        if self
+            .routing_setup_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            log::warn!("[routing] setup already in progress, skipping duplicate trigger");
+            return;
+        }
         let addresses = self.settings.lock().unwrap().addresses.clone();
         let flag = self.routing_active.clone();
         let wan_ref = self.last_wan_interface.clone();
+        let in_progress = self.routing_setup_in_progress.clone();
 
-        std::thread::Builder::new()
+        let spawn_result = std::thread::Builder::new()
             .name("routing-setup".into())
             .spawn(move || match routing::setup_routing(&addresses) {
                 Ok(wan) => {
@@ -154,8 +164,19 @@ impl TunnelManager {
                     *wan_ref.lock().unwrap() = wan;
                 }
                 Err(e) => log::error!("[routing] setup failed: {}", e),
-            })
-            .ok();
+            });
+        match spawn_result {
+            Ok(handle) => {
+                std::thread::spawn(move || {
+                    let _ = handle.join();
+                    in_progress.store(false, Ordering::SeqCst);
+                });
+            }
+            Err(e) => {
+                in_progress.store(false, Ordering::SeqCst);
+                log::error!("[routing] failed to spawn setup thread: {}", e);
+            }
+        }
     }
 
     fn teardown_if_active(&self) {
@@ -178,11 +199,14 @@ impl TunnelManager {
             let pid = child.id();
             log::info!("Stopping tunnel (PID: {})", pid);
 
-            // Try SIGTERM first
-            let _ = nix::sys::signal::kill(
-                nix::unistd::Pid::from_raw(pid as i32),
-                nix::sys::signal::Signal::SIGTERM,
-            );
+            // Try graceful termination first on Unix.
+            #[cfg(unix)]
+            {
+                let _ = nix::sys::signal::kill(
+                    nix::unistd::Pid::from_raw(pid as i32),
+                    nix::sys::signal::Signal::SIGTERM,
+                );
+            }
 
             // Wait up to 5 seconds
             for _ in 0..50 {
@@ -241,7 +265,10 @@ impl TunnelManager {
     }
 
     fn reroute(&self, new_wan: &str) {
-        let msg = format!("[watchdog] WAN changed → {}, updating server routes", new_wan);
+        let msg = format!(
+            "[watchdog] WAN changed → {}, updating server routes",
+            new_wan
+        );
         log::info!("{}", msg);
         logs::global_buffer().push(msg);
 
@@ -270,11 +297,7 @@ impl TunnelManager {
         if let Some(current_wan) = routing::current_wan_interface() {
             let saved_wan = self.last_wan_interface.lock().unwrap().clone();
             if !saved_wan.is_empty() && current_wan != saved_wan {
-                log::warn!(
-                    "[watchdog] WAN changed: {} -> {}",
-                    saved_wan,
-                    current_wan
-                );
+                log::warn!("[watchdog] WAN changed: {} -> {}", saved_wan, current_wan);
                 self.reroute(&current_wan);
                 return;
             }
@@ -318,10 +341,8 @@ impl TunnelManager {
                 if let Some(ref mut child) = *child_lock {
                     match child.try_wait() {
                         Ok(Some(exit)) => {
-                            let msg = format!(
-                                "[tunnel] process exited: {}",
-                                exit.code().unwrap_or(-1)
-                            );
+                            let msg =
+                                format!("[tunnel] process exited: {}", exit.code().unwrap_or(-1));
                             log::warn!("{}", msg);
                             logs::global_buffer().push(msg.clone());
                             {

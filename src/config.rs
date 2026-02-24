@@ -40,15 +40,33 @@ pub struct TunnelSettings {
     #[serde(default)]
     pub killswitch_enabled: bool,
     #[serde(default)]
+    pub killswitch_allow_ports: Vec<u16>,
+    #[serde(default = "default_true")]
+    pub post_quantum_group_enabled: bool,
+    #[serde(default)]
+    pub exclusions: Vec<String>,
+    #[serde(default)]
     pub included_routes: Vec<String>,
     #[serde(default)]
     pub excluded_routes: Vec<String>,
     #[serde(default = "default_mtu")]
     pub mtu_size: u16,
     #[serde(default)]
+    pub bound_if: String,
+    #[serde(default = "default_false")]
+    pub change_system_dns: bool,
+    #[serde(default)]
     pub anti_dpi: bool,
+    #[serde(default = "default_true")]
+    pub has_ipv6: bool,
+    #[serde(default)]
+    pub client_random: String,
     #[serde(default)]
     pub socks_address: String,
+    #[serde(default)]
+    pub socks_username: String,
+    #[serde(default)]
+    pub socks_password: String,
     #[serde(default = "default_reconnect_delay")]
     pub reconnect_delay: u64,
     #[serde(default = "default_loglevel")]
@@ -61,8 +79,6 @@ pub struct WebUISettings {
     pub port: u16,
     #[serde(default = "default_bind")]
     pub bind: String,
-    #[serde(default = "default_true")]
-    pub auth: bool,
     #[serde(default)]
     pub ndm_host: String,
     #[serde(default = "default_ndm_port")]
@@ -117,29 +133,64 @@ impl Default for RoutingSettings {
     }
 }
 
-fn default_watchdog_interval() -> u64 { 30 }
-fn default_watchdog_failures() -> u32 { 3 }
+fn default_watchdog_interval() -> u64 {
+    30
+}
+fn default_watchdog_failures() -> u32 {
+    3
+}
 fn default_watchdog_check_url() -> String {
     "http://connectivitycheck.gstatic.com/generate_204".into()
 }
-fn default_watchdog_check_timeout() -> u64 { 5 }
+fn default_watchdog_check_timeout() -> u64 {
+    5
+}
 
-fn default_upstream_protocol() -> String { "http2".into() }
-fn default_vpn_mode() -> String { "general".into() }
-fn default_mtu() -> u16 { 1280 }
-fn default_reconnect_delay() -> u64 { 5 }
-fn default_loglevel() -> String { "info".into() }
-fn default_port() -> u16 { 8080 }
-fn default_bind() -> String { "0.0.0.0".into() }
-fn default_true() -> bool { true }
-fn default_max_lines() -> usize { 500 }
-fn default_ndm_port() -> u16 { 80 }
-fn default_file_enabled() -> bool { true }
+fn default_upstream_protocol() -> String {
+    "http2".into()
+}
+fn default_vpn_mode() -> String {
+    "general".into()
+}
+fn default_mtu() -> u16 {
+    1280
+}
+fn default_reconnect_delay() -> u64 {
+    5
+}
+fn default_loglevel() -> String {
+    "info".into()
+}
+fn default_port() -> u16 {
+    8080
+}
+fn default_bind() -> String {
+    "0.0.0.0".into()
+}
+fn default_true() -> bool {
+    true
+}
+fn default_false() -> bool {
+    false
+}
+fn default_max_lines() -> usize {
+    500
+}
+fn default_ndm_port() -> u16 {
+    80
+}
+fn default_file_enabled() -> bool {
+    true
+}
 fn default_log_file_path() -> String {
     "/var/log/trusttunnel-keenetic/trusttunnel-keenetic.log".into()
 }
-fn default_rotate_size_bytes() -> u64 { 512 * 1024 }
-fn default_rotate_keep() -> usize { 1 }
+fn default_rotate_size_bytes() -> u64 {
+    512 * 1024
+}
+fn default_rotate_keep() -> usize {
+    1
+}
 
 fn parse_size_with_units(value: &str) -> Option<u64> {
     let trimmed = value.trim();
@@ -210,6 +261,9 @@ impl Default for TunnelSettings {
             vpn_mode: default_vpn_mode(),
             dns_upstreams: vec!["tls://1.1.1.1".into()],
             killswitch_enabled: false,
+            killswitch_allow_ports: Vec::new(),
+            post_quantum_group_enabled: true,
+            exclusions: Vec::new(),
             included_routes: vec!["0.0.0.0/0".into(), "2000::/3".into()],
             excluded_routes: vec![
                 "10.0.0.0/8".into(),
@@ -217,8 +271,14 @@ impl Default for TunnelSettings {
                 "192.168.0.0/16".into(),
             ],
             mtu_size: default_mtu(),
+            bound_if: String::new(),
+            change_system_dns: false,
             anti_dpi: false,
+            has_ipv6: true,
+            client_random: String::new(),
             socks_address: String::new(),
+            socks_username: String::new(),
+            socks_password: String::new(),
             reconnect_delay: default_reconnect_delay(),
             loglevel: default_loglevel(),
         }
@@ -230,7 +290,6 @@ impl Default for WebUISettings {
         Self {
             port: default_port(),
             bind: default_bind(),
-            auth: true,
             ndm_host: String::new(),
             ndm_port: default_ndm_port(),
         }
@@ -250,7 +309,6 @@ impl Default for LogSettings {
     }
 }
 
-
 impl WrapperConfig {
     pub fn load(path: &str) -> Result<Self, String> {
         if !Path::new(path).exists() {
@@ -259,19 +317,16 @@ impl WrapperConfig {
         }
         let content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config {}: {}", path, e))?;
-        serde_json::from_str(&content)
-            .map_err(|e| format!("Failed to parse config: {}", e))
+        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))
     }
 
     pub fn save(&self, path: &str) -> Result<(), String> {
         if let Some(parent) = Path::new(path).parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create dir: {}", e))?;
+            fs::create_dir_all(parent).map_err(|e| format!("Failed to create dir: {}", e))?;
         }
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        fs::write(path, content)
-            .map_err(|e| format!("Failed to write config: {}", e))
+        fs::write(path, content).map_err(|e| format!("Failed to write config: {}", e))
     }
 }
 
@@ -285,7 +340,28 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
         "killswitch_enabled = {}\n",
         settings.killswitch_enabled
     ));
-    toml.push_str(&format!("anti_dpi = {}\n", settings.anti_dpi));
+    toml.push_str(&format!(
+        "killswitch_allow_ports = [{}]\n",
+        settings
+            .killswitch_allow_ports
+            .iter()
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    toml.push_str(&format!(
+        "post_quantum_group_enabled = {}\n",
+        settings.post_quantum_group_enabled
+    ));
+    toml.push_str(&format!(
+        "exclusions = [{}]\n",
+        settings
+            .exclusions
+            .iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
 
     if !settings.dns_upstreams.is_empty() {
         toml.push_str(&format!(
@@ -316,17 +392,23 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
         "upstream_protocol = \"{}\"\n",
         settings.upstream_protocol
     ));
+    toml.push_str(&format!("has_ipv6 = {}\n", settings.has_ipv6));
+    toml.push_str(&format!("client_random = \"{}\"\n", settings.client_random));
     toml.push_str(&format!(
         "skip_verification = {}\n",
         settings.skip_verification
     ));
+    toml.push_str(&format!("anti_dpi = {}\n", settings.anti_dpi));
     if !settings.certificate.is_empty() {
         toml.push_str(&format!("certificate = \"{}\"\n", settings.certificate));
     }
 
     toml.push_str("\n[listener.tun]\n");
-    toml.push_str("bound_if = \"\"\n");
-    toml.push_str("change_system_dns = false\n");
+    toml.push_str(&format!("bound_if = \"{}\"\n", settings.bound_if));
+    toml.push_str(&format!(
+        "change_system_dns = {}\n",
+        settings.change_system_dns
+    ));
     let included = if settings.included_routes.is_empty() && settings.vpn_mode == "general" {
         vec!["0.0.0.0/0".to_string(), "2000::/3".to_string()]
     } else {
@@ -358,6 +440,12 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
     if !settings.socks_address.is_empty() {
         toml.push_str("\n[listener.socks]\n");
         toml.push_str(&format!("address = \"{}\"\n", settings.socks_address));
+        if !settings.socks_username.is_empty() {
+            toml.push_str(&format!("username = \"{}\"\n", settings.socks_username));
+        }
+        if !settings.socks_password.is_empty() {
+            toml.push_str(&format!("password = \"{}\"\n", settings.socks_password));
+        }
     }
 
     toml

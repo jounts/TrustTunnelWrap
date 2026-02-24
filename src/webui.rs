@@ -3,11 +3,13 @@ use crate::config::{TunnelSettings, WrapperConfig};
 use crate::logs;
 use crate::tunnel::TunnelManager;
 use std::collections::HashMap;
+use std::io::Read;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 
 const SESSION_TTL_SECS: u64 = 3600;
+const MAX_BODY_BYTES: usize = 64 * 1024;
 const INDEX_HTML: &str = include_str!("../package/www/index.html");
 
 struct Sessions {
@@ -102,14 +104,14 @@ impl WebUI {
             (Method::Post, "/api/login") => self.api_login(&mut request),
             (Method::Get, "/api/status") => self.api_authed(&request, |s| s.api_status()),
             (Method::Get, "/api/config") => self.api_authed(&request, |s| s.api_get_config()),
-            (Method::Post, "/api/config") => {
-                let body = read_body(&mut request);
-                self.api_authed(&request, |s| s.api_set_config(&body))
-            }
-            (Method::Post, "/api/control") => {
-                let body = read_body(&mut request);
-                self.api_authed(&request, |s| s.api_control(&body))
-            }
+            (Method::Post, "/api/config") => match read_body(&mut request) {
+                Ok(body) => self.api_authed(&request, |s| s.api_set_config(&body)),
+                Err(e) => json_response(413, &serde_json::json!({"error": e}).to_string()),
+            },
+            (Method::Post, "/api/control") => match read_body(&mut request) {
+                Ok(body) => self.api_authed(&request, |s| s.api_control(&body)),
+                Err(e) => json_response(413, &serde_json::json!({"error": e}).to_string()),
+            },
             (Method::Get, "/api/logs") => self.api_authed(&request, |s| s.api_logs(&request)),
             _ => json_response(404, r#"{"error":"not found"}"#),
         };
@@ -120,14 +122,15 @@ impl WebUI {
     fn serve_index(&self, _req: &Request) -> Response<std::io::Cursor<Vec<u8>>> {
         let data = INDEX_HTML.as_bytes().to_vec();
         Response::from_data(data)
-            .with_header(
-                Header::from_bytes("Content-Type", "text/html; charset=utf-8").unwrap(),
-            )
+            .with_header(Header::from_bytes("Content-Type", "text/html; charset=utf-8").unwrap())
             .with_header(Header::from_bytes("Cache-Control", "public, max-age=300").unwrap())
     }
 
     fn api_login(&self, request: &mut Request) -> Response<std::io::Cursor<Vec<u8>>> {
-        let body = read_body(request);
+        let body = match read_body(request) {
+            Ok(body) => body,
+            Err(e) => return json_response(413, &serde_json::json!({"error": e}).to_string()),
+        };
         let parsed: Result<serde_json::Value, _> = serde_json::from_str(&body);
         let (login, password) = match parsed {
             Ok(v) => {
@@ -200,13 +203,20 @@ impl WebUI {
             }
         };
 
-        // Update in-memory config
+        // Save first, then swap in-memory state to keep API semantics transactional.
         {
             let mut cfg = self.config.lock().unwrap();
-            cfg.tunnel = new_tunnel.clone();
-            if let Err(e) = cfg.save(&self.config_path) {
+            let mut next_cfg = cfg.clone();
+            next_cfg.tunnel = new_tunnel.clone();
+            if let Err(e) = next_cfg.save(&self.config_path) {
                 log::error!("Failed to save config: {}", e);
+                return json_response(
+                    500,
+                    &serde_json::json!({"error": format!("failed to save config: {}", e)})
+                        .to_string(),
+                );
             }
+            *cfg = next_cfg;
         }
 
         // Update tunnel settings (will take effect on next restart)
@@ -221,18 +231,12 @@ impl WebUI {
             Err(_) => return json_response(400, r#"{"error":"invalid json"}"#),
         };
 
-        let action = parsed
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let action = parsed.get("action").and_then(|v| v.as_str()).unwrap_or("");
 
         match action {
             "connect" => match self.tunnel.start() {
                 Ok(()) => json_response(200, r#"{"status":"connecting"}"#),
-                Err(e) => json_response(
-                    400,
-                    &serde_json::json!({"error": e}).to_string(),
-                ),
+                Err(e) => json_response(400, &serde_json::json!({"error": e}).to_string()),
             },
             "disconnect" => {
                 self.tunnel.stop();
@@ -240,10 +244,7 @@ impl WebUI {
             }
             "restart" => match self.tunnel.restart() {
                 Ok(()) => json_response(200, r#"{"status":"restarting"}"#),
-                Err(e) => json_response(
-                    400,
-                    &serde_json::json!({"error": e}).to_string(),
-                ),
+                Err(e) => json_response(400, &serde_json::json!({"error": e}).to_string()),
             },
             _ => json_response(400, r#"{"error":"unknown action"}"#),
         }
@@ -269,15 +270,22 @@ fn json_response(status: u16, body: &str) -> Response<std::io::Cursor<Vec<u8>>> 
     Response::from_data(data)
         .with_status_code(StatusCode(status))
         .with_header(Header::from_bytes("Content-Type", "application/json").unwrap())
-        .with_header(
-            Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap(),
-        )
+        .with_header(Header::from_bytes("Access-Control-Allow-Origin", "*").unwrap())
 }
 
-fn read_body(request: &mut Request) -> String {
+fn read_body(request: &mut Request) -> Result<String, String> {
+    let mut reader = request.as_reader().take((MAX_BODY_BYTES + 1) as u64);
     let mut body = String::new();
-    let _ = request.as_reader().read_to_string(&mut body);
-    body
+    reader
+        .read_to_string(&mut body)
+        .map_err(|e| format!("failed to read request body: {}", e))?;
+    if body.len() > MAX_BODY_BYTES {
+        return Err(format!(
+            "request body too large (max {} bytes)",
+            MAX_BODY_BYTES
+        ));
+    }
+    Ok(body)
 }
 
 fn get_auth_header(request: &Request) -> Option<String> {
