@@ -7,9 +7,7 @@ const OPKG_TUN_NAME: &str = "opkgtun0";
 const NDM_IF_NAME: &str = "OpkgTun0";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
-const NDM_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const NDM_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
-const NDM_IF_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 const NDM_RETRY_BASE_DELAY_MS: u64 = 200;
 const NDM_MAX_ATTEMPTS: u32 = 10;
 
@@ -120,13 +118,8 @@ fn ndmc_exec_once(cmd: &str) -> Result<String, String> {
     }
 }
 
-fn summarize_ndmc_output(cmd: &str, output: &str) -> String {
+fn summarize_ndmc_output(_cmd: &str, output: &str) -> String {
     let trimmed = output.trim();
-    if cmd == "show interface" {
-        let lines = trimmed.lines().count();
-        return format!("{} lines", lines);
-    }
-
     const MAX_LEN: usize = 240;
     if trimmed.len() > MAX_LEN {
         format!("{}...", &trimmed[..MAX_LEN])
@@ -172,79 +165,20 @@ fn ndmc(cmd: &str) -> Result<String, String> {
     Err(last_err)
 }
 
-fn wait_ndm_ready() -> Result<(), String> {
-    let start = std::time::Instant::now();
-    while start.elapsed() < NDM_READY_TIMEOUT {
-        // Probe NDM CLI readiness with a valid read-only command.
-        match ndmc("show interface") {
-            Ok(_) => return Ok(()),
-            Err(e) => {
-                if !is_ndm_transient_error(&e) {
-                    return Err(format!("NDM check failed: {}", e));
-                }
-                std::thread::sleep(Duration::from_millis(250));
-            }
-        }
-    }
-    Err(format!(
-        "NDM is not ready after {}s",
-        NDM_READY_TIMEOUT.as_secs()
-    ))
-}
-
-fn verify_ndm_default_route() -> bool {
+fn verify_kernel_default_route_via_opkgtun() -> bool {
     let start = std::time::Instant::now();
     while start.elapsed() < NDM_VERIFY_TIMEOUT {
-        if let Ok(output) = ndmc("show interface") {
-            if interface_defaultgw_is_yes(&output, NDM_IF_NAME) {
+        if let Ok(out) = run_cmd("ip", &["-o", "route", "show", "default"]) {
+            if out
+                .lines()
+                .any(|line| line.split_whitespace().collect::<Vec<_>>().windows(2).any(|w| w == ["dev", OPKG_TUN_NAME]))
+            {
                 return true;
             }
         }
         std::thread::sleep(Duration::from_millis(300));
     }
     false
-}
-
-fn interface_exists_in_show_output(show_output: &str, if_name: &str) -> bool {
-    let needle = format!("id: {}", if_name);
-    show_output.lines().any(|l| l.trim() == needle)
-}
-
-fn interface_defaultgw_is_yes(show_output: &str, if_name: &str) -> bool {
-    let needle = format!("id: {}", if_name);
-    let mut in_target = false;
-    for raw in show_output.lines() {
-        let line = raw.trim();
-        if line.starts_with("id: ") {
-            if in_target {
-                // New interface block started; target block ended.
-                return false;
-            }
-            in_target = line == needle;
-            continue;
-        }
-        if in_target && line == "defaultgw: yes" {
-            return true;
-        }
-    }
-    false
-}
-
-fn wait_ndm_interface_exists() -> Result<(), String> {
-    let start = std::time::Instant::now();
-    while start.elapsed() < NDM_IF_WAIT_TIMEOUT {
-        if let Ok(output) = ndmc("show interface") {
-            if interface_exists_in_show_output(&output, NDM_IF_NAME) {
-                return Ok(());
-            }
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    }
-    Err(format!(
-        "interface {} did not appear in NDM within {}s",
-        NDM_IF_NAME,
-        NDM_IF_WAIT_TIMEOUT.as_secs()
-    ))
 }
 
 fn ndmc_soft(cmd: &str) {
@@ -298,14 +232,13 @@ fn prefix_to_netmask(prefix: u8) -> String {
 }
 
 fn ensure_ndm_interface_object() -> Result<(), String> {
-    wait_ndm_ready()?;
     let msg = format!("[routing] ensuring {} in NDM (ndmc={})", NDM_IF_NAME, find_ndmc());
     log::info!("{}", msg);
     crate::logs::global_buffer().push(msg);
 
     // Create NDM interface object first.
+    // ndmc() already has retries and transient error handling.
     ndmc_required(&format!("interface {}", NDM_IF_NAME))?;
-    wait_ndm_interface_exists()?;
     Ok(())
 }
 
@@ -333,12 +266,12 @@ fn set_ndm_default_routes() -> Result<(), String> {
 }
 
 fn assert_ndm_default_route() -> Result<(), String> {
-    if verify_ndm_default_route() {
+    if verify_kernel_default_route_via_opkgtun() {
         Ok(())
     } else {
         Err(format!(
-            "NDM default route is not active for {} (defaultgw: no)",
-            NDM_IF_NAME
+            "default route via {} is not active in kernel routing table",
+            OPKG_TUN_NAME
         ))
     }
 }
@@ -376,10 +309,44 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     // OpkgTun creation failure when opkgtun0 already exists.
     ensure_ndm_interface_object()?;
 
-    log::info!("[routing] renaming {} → {}", TUN_NAME, OPKG_TUN_NAME);
-    run_cmd("ip", &["link", "set", TUN_NAME, "down"])?;
-    run_cmd("ip", &["link", "set", TUN_NAME, "name", OPKG_TUN_NAME])?;
-    run_cmd("ip", &["link", "set", OPKG_TUN_NAME, "up"])?;
+    let tun_exists = std::path::Path::new(&format!("/sys/class/net/{}", TUN_NAME)).exists();
+    let opkg_exists = std::path::Path::new(&format!("/sys/class/net/{}", OPKG_TUN_NAME)).exists();
+
+    if tun_exists {
+        log::info!("[routing] renaming {} → {}", TUN_NAME, OPKG_TUN_NAME);
+        run_cmd("ip", &["link", "set", TUN_NAME, "down"])?;
+        match run_cmd("ip", &["link", "set", TUN_NAME, "name", OPKG_TUN_NAME]) {
+            Ok(_) => {}
+            Err(e) => {
+                let opkg_now_exists =
+                    std::path::Path::new(&format!("/sys/class/net/{}", OPKG_TUN_NAME)).exists();
+                if e.to_ascii_lowercase().contains("file exists") && opkg_now_exists {
+                    let msg = format!(
+                        "[routing] {} already exists, continuing: {}",
+                        OPKG_TUN_NAME, e
+                    );
+                    log::warn!("{}", msg);
+                    crate::logs::global_buffer().push(msg);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+        run_cmd("ip", &["link", "set", OPKG_TUN_NAME, "up"])?;
+    } else if opkg_exists {
+        let msg = format!(
+            "[routing] {} already present and {} is absent, skipping rename",
+            OPKG_TUN_NAME, TUN_NAME
+        );
+        log::info!("{}", msg);
+        crate::logs::global_buffer().push(msg);
+        run_cmd_ok("ip", &["link", "set", OPKG_TUN_NAME, "up"]);
+    } else {
+        return Err(format!(
+            "neither {} nor {} exists after wait stage",
+            TUN_NAME, OPKG_TUN_NAME
+        ));
+    }
 
     // Apply runtime params after opkgtun0 exists and has IP/MTU.
     apply_ndm_interface_settings()?;
