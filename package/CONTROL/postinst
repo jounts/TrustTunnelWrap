@@ -34,8 +34,8 @@ case "$1" in
     # Give processes a moment to exit cleanly before cleanup.
     sleep 1
     # Keep stop idempotent and leave a clean slate for next start.
-    ndmc -c 'interface OpkgTun0 down' 2>/dev/null || true
-    ndmc -c 'no interface OpkgTun0' 2>/dev/null || true
+    ndmc -c 'interface OpkgTun0 down' >/dev/null 2>&1 || true
+    ndmc -c 'no interface OpkgTun0' >/dev/null 2>&1 || true
     ip link del opkgtun0 2>/dev/null || true
     ip link del tun0 2>/dev/null || true
     ;;

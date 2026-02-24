@@ -120,13 +120,33 @@ fn ndmc_exec_once(cmd: &str) -> Result<String, String> {
     }
 }
 
+fn summarize_ndmc_output(cmd: &str, output: &str) -> String {
+    let trimmed = output.trim();
+    if cmd == "show interface" {
+        let lines = trimmed.lines().count();
+        return format!("{} lines", lines);
+    }
+
+    const MAX_LEN: usize = 240;
+    if trimmed.len() > MAX_LEN {
+        format!("{}...", &trimmed[..MAX_LEN])
+    } else {
+        trimmed.to_string()
+    }
+}
+
 fn ndmc(cmd: &str) -> Result<String, String> {
     let _guard = ndmc_lock().lock().unwrap();
     let mut last_err = String::new();
     for attempt in 1..=NDM_MAX_ATTEMPTS {
         match ndmc_exec_once(cmd) {
             Ok(output) => {
-                let msg = format!("[ndmc] ok: {} {}", cmd, output);
+                let summary = summarize_ndmc_output(cmd, &output);
+                let msg = if summary.is_empty() {
+                    format!("[ndmc] ok: {}", cmd)
+                } else {
+                    format!("[ndmc] ok: {} ({})", cmd, summary)
+                };
                 log::info!("{}", msg);
                 crate::logs::global_buffer().push(msg);
                 return Ok(output);

@@ -8,8 +8,8 @@ rm -f /opt/etc/init.d/S50trusttunnel
 rmdir /opt/etc/trusttunnel 2>/dev/null || true
 
 # Remove NDM interface registration
-ndmc -c 'interface OpkgTun0 down' 2>/dev/null || true
-ndmc -c 'no interface OpkgTun0' 2>/dev/null || true
+ndmc -c 'interface OpkgTun0 down' >/dev/null 2>&1 || true
+ndmc -c 'no interface OpkgTun0' >/dev/null 2>&1 || true
 
 # Remove Linux links created by client (new and legacy names)
 ip link del opkgtun0 2>/dev/null || true
