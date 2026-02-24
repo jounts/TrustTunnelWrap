@@ -8,6 +8,7 @@ use std::{
 
 const TUN_NAME: &str = "tun0";
 const OPKG_TUN_NAME: &str = "opkgtun0";
+const OPKG_TUN_BACKUP_NAME: &str = "opkgbak0";
 const NDM_IF_NAME: &str = "OpkgTun0";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
@@ -358,8 +359,8 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     }
     std::thread::sleep(Duration::from_millis(500));
 
-    // Remove stale opkgtun0 if leftover from a previous run
-    run_cmd_ok("ip", &["link", "del", OPKG_TUN_NAME]);
+    // Clear possible leftover backup from a previous interrupted rename flow.
+    run_cmd_ok("ip", &["link", "del", OPKG_TUN_BACKUP_NAME]);
 
     // Create NDM object before Linux rename. On some Keenetic builds this avoids
     // OpkgTun creation failure when opkgtun0 already exists.
@@ -378,20 +379,41 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
                     std::path::Path::new(&format!("/sys/class/net/{}", OPKG_TUN_NAME)).exists();
                 if e.to_ascii_lowercase().contains("file exists") && opkg_now_exists {
                     let msg = format!(
-                        "[routing] {} already exists, recreating from {}: {}",
+                        "[routing] {} already exists, replacing with fresh {}: {}",
                         OPKG_TUN_NAME, TUN_NAME, e
                     );
                     log::warn!("{}", msg);
                     crate::logs::global_buffer().push(msg);
-                    run_cmd_ok("ip", &["link", "set", OPKG_TUN_NAME, "down"]);
-                    run_cmd_ok("ip", &["link", "del", OPKG_TUN_NAME]);
                     if !wait_for_tun_retry() {
                         return Err(format!(
                             "{} disappeared before rename retry after {} conflict",
                             TUN_NAME, OPKG_TUN_NAME
                         ));
                     }
-                    run_cmd("ip", &["link", "set", TUN_NAME, "name", OPKG_TUN_NAME])?;
+
+                    // Two-phase swap with rollback: preserve existing opkgtun0 until
+                    // fresh tun0 is successfully moved into place.
+                    run_cmd_ok("ip", &["link", "set", OPKG_TUN_NAME, "down"]);
+                    run_cmd("ip", &["link", "set", OPKG_TUN_NAME, "name", OPKG_TUN_BACKUP_NAME])?;
+
+                    match run_cmd("ip", &["link", "set", TUN_NAME, "name", OPKG_TUN_NAME]) {
+                        Ok(_) => {
+                            run_cmd_ok("ip", &["link", "del", OPKG_TUN_BACKUP_NAME]);
+                        }
+                        Err(rename_err) => {
+                            let rollback = run_cmd(
+                                "ip",
+                                &["link", "set", OPKG_TUN_BACKUP_NAME, "name", OPKG_TUN_NAME],
+                            );
+                            if let Err(rb_err) = rollback {
+                                log::error!(
+                                    "[routing] rollback failed after rename error: {}",
+                                    rb_err
+                                );
+                            }
+                            return Err(rename_err);
+                        }
+                    }
                 } else {
                     return Err(e);
                 }
