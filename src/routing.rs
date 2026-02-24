@@ -9,6 +9,7 @@ const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const NDM_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const NDM_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
+const NDM_IF_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 const NDM_RETRY_BASE_DELAY_MS: u64 = 200;
 const NDM_MAX_ATTEMPTS: u32 = 10;
 
@@ -87,7 +88,9 @@ fn ndmc_lock() -> &'static Mutex<()> {
 fn is_ndm_transient_error(message: &str) -> bool {
     let m = message.to_ascii_lowercase();
     m.contains("0xcffd0060")
+        || m.contains("0xcffd009f")
         || m.contains("failed to initialize")
+        || m.contains("unable to find opkgtun0")
         || m.contains("temporarily unavailable")
 }
 
@@ -152,9 +155,13 @@ fn ndmc(cmd: &str) -> Result<String, String> {
 fn wait_ndm_ready() -> Result<(), String> {
     let start = std::time::Instant::now();
     while start.elapsed() < NDM_READY_TIMEOUT {
-        match ndmc("show interface") {
+        // Probe a cheap command and treat "not found" as ready CLI.
+        match ndmc(&format!("show interface {}", NDM_IF_NAME)) {
             Ok(_) => return Ok(()),
             Err(e) => {
+                if e.to_ascii_lowercase().contains("unable to find") {
+                    return Ok(());
+                }
                 if !is_ndm_transient_error(&e) {
                     return Err(format!("NDM check failed: {}", e));
                 }
@@ -180,6 +187,22 @@ fn verify_ndm_default_route() -> bool {
         std::thread::sleep(Duration::from_millis(300));
     }
     false
+}
+
+fn wait_ndm_interface_exists() -> Result<(), String> {
+    let start = std::time::Instant::now();
+    let cmd = format!("show interface {}", NDM_IF_NAME);
+    while start.elapsed() < NDM_IF_WAIT_TIMEOUT {
+        if ndmc(&cmd).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    Err(format!(
+        "interface {} did not appear in NDM within {}s",
+        NDM_IF_NAME,
+        NDM_IF_WAIT_TIMEOUT.as_secs()
+    ))
 }
 
 fn ndmc_soft(cmd: &str) {
@@ -238,8 +261,9 @@ fn register_ndm_interface() -> Result<(), String> {
     log::info!("{}", msg);
     crate::logs::global_buffer().push(msg);
 
-    // Usually idempotent; if interface already exists, continue.
-    ndmc_soft(&format!("interface {}", NDM_IF_NAME));
+    // Must succeed (with retries) so subsequent IP commands can see the interface.
+    ndmc_required(&format!("interface {}", NDM_IF_NAME))?;
+    wait_ndm_interface_exists()?;
 
     if let Some((ip, mask)) = get_tun_ip_mask() {
         ndmc_required(&format!("interface {} ip address {} {}", NDM_IF_NAME, ip, mask))?;
