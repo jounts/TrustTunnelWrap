@@ -19,6 +19,10 @@ CONFIG=/opt/etc/trusttunnel/config.json
 case "$1" in
   start)
     echo "Starting $NAME..."
+    if pidof "$NAME" >/dev/null 2>&1; then
+        echo "$NAME is already running"
+        exit 0
+    fi
     if [ -x "$DAEMON" ]; then
         $DAEMON --daemon --config "$CONFIG"
     fi
@@ -27,6 +31,8 @@ case "$1" in
     echo "Stopping $NAME..."
     killall $NAME 2>/dev/null || true
     killall trusttunnel_client 2>/dev/null || true
+    # Give processes a moment to exit cleanly before cleanup.
+    sleep 1
     # Keep stop idempotent and leave a clean slate for next start.
     ndmc -c 'interface OpkgTun0 down' 2>/dev/null || true
     ndmc -c 'no interface OpkgTun0' 2>/dev/null || true

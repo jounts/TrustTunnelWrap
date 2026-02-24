@@ -26,6 +26,7 @@ pub struct TunnelManager {
     connect_time: Mutex<Option<Instant>>,
     routing_enabled: bool,
     routing_active: Arc<AtomicBool>,
+    routing_setup_in_progress: Arc<AtomicBool>,
     // watchdog
     watchdog_enabled: bool,
     watchdog_interval: Duration,
@@ -51,6 +52,7 @@ impl TunnelManager {
             connect_time: Mutex::new(None),
             routing_enabled: routing.enabled,
             routing_active: Arc::new(AtomicBool::new(false)),
+            routing_setup_in_progress: Arc::new(AtomicBool::new(false)),
             watchdog_enabled: routing.watchdog_enabled,
             watchdog_interval: Duration::from_secs(routing.watchdog_interval),
             watchdog_max_failures: routing.watchdog_failures,
@@ -142,11 +144,20 @@ impl TunnelManager {
         if !self.routing_enabled {
             return;
         }
+        if self
+            .routing_setup_in_progress
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            log::warn!("[routing] setup already in progress, skipping duplicate trigger");
+            return;
+        }
         let addresses = self.settings.lock().unwrap().addresses.clone();
         let flag = self.routing_active.clone();
         let wan_ref = self.last_wan_interface.clone();
+        let in_progress = self.routing_setup_in_progress.clone();
 
-        std::thread::Builder::new()
+        let spawn_result = std::thread::Builder::new()
             .name("routing-setup".into())
             .spawn(move || match routing::setup_routing(&addresses) {
                 Ok(wan) => {
@@ -154,8 +165,19 @@ impl TunnelManager {
                     *wan_ref.lock().unwrap() = wan;
                 }
                 Err(e) => log::error!("[routing] setup failed: {}", e),
-            })
-            .ok();
+            });
+        match spawn_result {
+            Ok(handle) => {
+                std::thread::spawn(move || {
+                    let _ = handle.join();
+                    in_progress.store(false, Ordering::SeqCst);
+                });
+            }
+            Err(e) => {
+                in_progress.store(false, Ordering::SeqCst);
+                log::error!("[routing] failed to spawn setup thread: {}", e);
+            }
+        }
     }
 
     fn teardown_if_active(&self) {
