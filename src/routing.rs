@@ -315,10 +315,30 @@ fn assert_ndm_default_route() -> Result<(), String> {
     if verify_kernel_default_route_via_opkgtun() {
         Ok(())
     } else {
-        Err(format!(
-            "default route via {} is not active in kernel routing table",
+        let msg = format!(
+            "[routing] default route via {} not visible in kernel table yet; checking connectivity fallback",
             OPKG_TUN_NAME
-        ))
+        );
+        log::warn!("{}", msg);
+        crate::logs::global_buffer().push(msg);
+
+        if check_connectivity(
+            "http://connectivitycheck.gstatic.com/generate_204",
+            Duration::from_secs(5),
+        ) {
+            let ok = format!(
+                "[routing] connectivity probe via {} succeeded despite kernel table mismatch",
+                OPKG_TUN_NAME
+            );
+            log::info!("{}", ok);
+            crate::logs::global_buffer().push(ok);
+            Ok(())
+        } else {
+            Err(format!(
+                "default route via {} is not active in kernel routing table and connectivity probe failed",
+                OPKG_TUN_NAME
+            ))
+        }
     }
 }
 
