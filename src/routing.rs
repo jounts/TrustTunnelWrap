@@ -7,14 +7,16 @@ use std::{
 };
 
 const TUN_NAME: &str = "tun0";
-const OPKG_TUN_NAME: &str = "opkgtun0";
-const OPKG_TUN_BACKUP_NAME: &str = "opkgbak0";
+const OPKG_TUN_NAME: &str = "OpkgTun0";
+const OPKG_TUN_BACKUP_NAME: &str = "OpkgBak0";
 const NDM_IF_NAME: &str = "OpkgTun0";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const TUN_RENAME_RETRY_TIMEOUT: Duration = Duration::from_secs(3);
 const TUN_RENAME_RETRY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const NDM_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
+const NDM_BIND_VERIFY_TIMEOUT: Duration = Duration::from_secs(5);
+const NDM_BIND_VERIFY_POLL_INTERVAL: Duration = Duration::from_millis(300);
 const NDM_RETRY_BASE_DELAY_MS: u64 = 200;
 const NDM_MAX_ATTEMPTS: u32 = 10;
 
@@ -285,6 +287,47 @@ fn ensure_ndm_interface_object() -> Result<(), String> {
     Ok(())
 }
 
+fn parse_ndm_interface_index(output: &str) -> Option<u32> {
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if let Some(raw_index) = trimmed.strip_prefix("index:") {
+            return raw_index.trim().parse::<u32>().ok();
+        }
+    }
+    None
+}
+
+/// Keenetic GUI traffic counters can stay empty when the NDM object is not bound
+/// to a real Linux netdev (typically reported as `index: 0`).
+fn verify_ndm_linux_binding() {
+    let start = std::time::Instant::now();
+    while start.elapsed() < NDM_BIND_VERIFY_TIMEOUT {
+        match ndmc(&format!("show interface {}", NDM_IF_NAME)) {
+            Ok(out) => {
+                if let Some(index) = parse_ndm_interface_index(&out) {
+                    if index > 0 {
+                        let msg = format!("[routing] NDM bind check ok: {} index={}", NDM_IF_NAME, index);
+                        log::info!("{}", msg);
+                        crate::logs::global_buffer().push(msg);
+                        return;
+                    }
+                }
+            }
+            Err(e) => {
+                log::debug!("[routing] NDM bind check retry: {}", e);
+            }
+        }
+        std::thread::sleep(NDM_BIND_VERIFY_POLL_INTERVAL);
+    }
+
+    let msg = format!(
+        "[routing] NDM bind mismatch: {} has index=0 or unknown; traffic may pass but Keenetic GUI statistics can be empty",
+        NDM_IF_NAME
+    );
+    log::error!("{}", msg);
+    crate::logs::global_buffer().push(msg);
+}
+
 fn apply_ndm_interface_settings() -> Result<(), String> {
     if let Some((ip, mask)) = get_tun_ip_mask() {
         ndmc_required(&format!(
@@ -365,7 +408,7 @@ fn wait_for_tun_retry() -> bool {
 }
 
 /// Configure interface + NDM routing after the VPN client creates tun0.
-/// Renames tun0 → opkgtun0 and sets default route via NDM.
+/// Renames tun0 → OpkgTun0 and sets default route via NDM.
 /// Returns the detected WAN interface name on success.
 pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
     log::info!("[routing] waiting for {} ...", TUN_NAME);
@@ -455,8 +498,9 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
         ));
     }
 
-    // Apply runtime params after opkgtun0 exists and has IP/MTU.
+    // Apply runtime params after OpkgTun0 exists and has IP/MTU.
     apply_ndm_interface_settings()?;
+    verify_ndm_linux_binding();
 
     let wan_if = current_wan_interface().ok_or("failed to detect WAN interface")?;
     log::info!("[routing] WAN interface: {}", wan_if);
