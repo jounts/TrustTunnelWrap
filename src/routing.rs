@@ -7,8 +7,8 @@ use std::{
 };
 
 const TUN_NAME: &str = "tun0";
-const OPKG_TUN_NAME: &str = "OpkgTun0";
-const OPKG_TUN_BACKUP_NAME: &str = "OpkgBak0";
+const OPKG_TUN_NAME: &str = "opkgtun0";
+const OPKG_TUN_BACKUP_NAME: &str = "opkgbak0";
 const NDM_IF_NAME: &str = "OpkgTun0";
 const TUN_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const TUN_POLL_INTERVAL: Duration = Duration::from_millis(500);
