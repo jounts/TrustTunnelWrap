@@ -11,6 +11,7 @@ use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
 const SESSION_TTL_SECS: u64 = 3600;
 const MAX_BODY_BYTES: usize = 64 * 1024;
 const INDEX_HTML: &str = include_str!("../package/www/index.html");
+const WEBUI_VERSION: &str = env!("TRUSTTUNNEL_VERSION");
 
 struct Sessions {
     tokens: HashMap<String, SystemTime>,
@@ -120,7 +121,8 @@ impl WebUI {
     }
 
     fn serve_index(&self, _req: &Request) -> Response<std::io::Cursor<Vec<u8>>> {
-        let data = INDEX_HTML.as_bytes().to_vec();
+        let html = INDEX_HTML.replace("__TRUSTTUNNEL_VERSION__", WEBUI_VERSION);
+        let data = html.into_bytes();
         Response::from_data(data)
             .with_header(Header::from_bytes("Content-Type", "text/html; charset=utf-8").unwrap())
             .with_header(Header::from_bytes("Cache-Control", "public, max-age=300").unwrap())
