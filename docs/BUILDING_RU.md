@@ -1,17 +1,17 @@
-# Build and Development
+# Сборка и разработка
 
-Russian version: [`BUILDING_RU.md`](BUILDING_RU.md)
+English version: [`BUILDING.md`](BUILDING.md)
 
-## Dependencies
+## Зависимости
 
 - [Rust](https://www.rust-lang.org/tools/install) >= 1.75
-- [cross](https://github.com/cross-rs/cross) for aarch64/armv7/x86_64 cross-builds
-- Docker (required by `cross`)
-- [musl.cc](https://musl.cc) toolchain for local `mipsel` builds
-- `tar`, `gzip` for IPK packaging
-- `curl` or `wget` for downloading pre-built client/toolchain
+- [cross](https://github.com/cross-rs/cross) для кросс-компиляции aarch64/armv7/x86_64
+- Docker (нужен для `cross`)
+- тулчейн [musl.cc](https://musl.cc) для локальной сборки `mipsel`
+- `tar`, `gzip` для упаковки IPK
+- `curl` или `wget` для загрузки pre-built клиента/тулчейна
 
-## Quick Start (host machine)
+## Быстрый старт (хост-машина)
 
 ```sh
 git clone https://github.com/jounts/TrustTunnelWrap.git
@@ -20,18 +20,18 @@ cargo build
 cargo run -- --foreground --config package/etc/trusttunnel/config.json
 ```
 
-## Cross Compilation
+## Кросс-компиляция
 
-### Supported targets
+### Поддерживаемые цели
 
-| Router arch | Rust target triple | Build method |
-|-------------|--------------------|--------------|
+| Архитектура роутера | Rust target triple | Метод |
+|---------------------|--------------------|-------|
 | aarch64 | `aarch64-unknown-linux-musl` | `cross` (Docker) |
-| mipsel | `mipsel-unknown-linux-musl` | local `cargo` + musl.cc |
+| mipsel | `mipsel-unknown-linux-musl` | локально `cargo` + musl.cc |
 | armv7 | `armv7-unknown-linux-musleabihf` | `cross` (Docker) |
 | x86_64 | `x86_64-unknown-linux-musl` | `cross` (Docker) |
 
-### Build with `cross` (aarch64, armv7, x86_64)
+### Сборка через `cross`
 
 ```sh
 cargo install cross --git https://github.com/cross-rs/cross
@@ -41,7 +41,7 @@ cross build --release --target armv7-unknown-linux-musleabihf
 cross build --release --target x86_64-unknown-linux-musl
 ```
 
-### Build `mipsel` locally
+### Сборка `mipsel` локально
 
 ```sh
 wget -qO- https://musl.cc/mipsel-linux-musl-cross.tgz | sudo tar xzf - -C /usr/local/ --strip-components=1
@@ -49,33 +49,29 @@ rustup target add mipsel-unknown-linux-musl
 cargo build --release --target mipsel-unknown-linux-musl
 ```
 
-The linker `mipsel-linux-musl-gcc` is configured in `.cargo/config.toml`.
+Линкер `mipsel-linux-musl-gcc` настроен в `.cargo/config.toml`.
 
-### Helper script
+### Вспомогательный скрипт
 
 ```sh
 ./scripts/build-release.sh aarch64-unknown-linux-musl
 ```
 
-## Binary Size Optimization
+## Упаковка IPK
 
-Release profile in `Cargo.toml` enables size-oriented optimization (`opt-level = "z"`, LTO, strip, `panic = "abort"`).
-
-## IPK Packaging
-
-### 1) Download pre-built TrustTunnelClient
+### 1) Скачать pre-built TrustTunnelClient
 
 ```sh
 ./scripts/download-client.sh v0.99.105 linux-aarch64 client_bin
 ```
 
-### 2) Build wrapper binary
+### 2) Собрать wrapper
 
 ```sh
 cross build --release --target aarch64-unknown-linux-musl
 ```
 
-### 3) Build `.ipk`
+### 3) Собрать `.ipk`
 
 ```sh
 ./scripts/package-ipk.sh aarch64 1.0.0 \
@@ -83,40 +79,40 @@ cross build --release --target aarch64-unknown-linux-musl
   client_bin
 ```
 
-Result example: `trusttunnel-keenetic_1.0.0_aarch64-3.10.ipk`
+Пример результата: `trusttunnel-keenetic_1.0.0_aarch64-3.10.ipk`
 
 ## CI/CD
 
 Workflow: `.github/workflows/build.yml`
 
-- Runs on `v*` tags for automatic release builds
-- Can be started manually from GitHub Actions
-- Builds all supported architectures and publishes artifacts with checksums
+- запуск по тегам `v*` (релизная сборка)
+- ручной запуск через GitHub Actions
+- сборка всех поддерживаемых архитектур и публикация артефактов с checksum
 
-## Development
+## Разработка
 
-### Tests
+### Тесты
 
 ```sh
 cargo test
 ```
 
-### Config validation
+### Проверка конфигурации
 
 ```sh
 cargo run -- --test --config package/etc/trusttunnel/config.json
 ```
 
-### Local run
+### Локальный запуск
 
 ```sh
 cp package/etc/trusttunnel/config.json /tmp/tt-test.json
 cargo run -- --foreground --config /tmp/tt-test.json
 ```
 
-Web UI is available at `http://127.0.0.1:8080`.
+Web UI будет доступен на `http://127.0.0.1:8080`.
 
-### Lint and format
+### Линт и форматирование
 
 ```sh
 cargo clippy --all-targets
@@ -124,15 +120,13 @@ cargo fmt --check
 cargo fmt
 ```
 
-## Router Install/Update Script
-
-Use `scripts/install.sh` on the router:
+## Скрипт установки/обновления на роутере
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/jounts/TrustTunnelWrap/main/scripts/install.sh | sh
 ```
 
-Fallback with `wget`:
+Альтернатива:
 
 ```sh
 wget -O /tmp/install-trusttunnel.sh https://raw.githubusercontent.com/jounts/TrustTunnelWrap/main/scripts/install.sh

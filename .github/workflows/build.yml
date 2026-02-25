@@ -45,6 +45,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Resolve build version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-dev.${{ github.run_number }}"
+          fi
+          echo "value=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Sync Cargo.toml version
+        run: |
+          sed -i -E '0,/^version = ".*"/s//version = "${{ steps.version.outputs.value }}"/' Cargo.toml
+          grep '^version = ' Cargo.toml | head -n1
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -89,7 +104,7 @@ jobs:
 
       - name: Build wrapper
         env:
-          TRUSTTUNNEL_VERSION: ${{ github.ref_name || format('0.0.0-dev.{0}', github.run_number) }}
+          TRUSTTUNNEL_VERSION: ${{ steps.version.outputs.value }}
         run: |
           if [ "${{ steps.target.outputs.use_cross }}" = "true" ]; then
             cross build --release --target ${{ steps.target.outputs.triple }}
@@ -111,15 +126,9 @@ jobs:
 
       - name: Package IPK
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/}"
-          else
-            VERSION="0.0.0-dev.${{ github.run_number }}"
-          fi
-
           ./scripts/package-ipk.sh \
             "${{ matrix.arch }}" \
-            "$VERSION" \
+            "${{ steps.version.outputs.value }}" \
             "target/${{ steps.target.outputs.triple }}/release/trusttunnel-keenetic" \
             "client_bin"
 
