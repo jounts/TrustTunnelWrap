@@ -23,6 +23,7 @@ package/etc/trusttunnel/config.json
     "password": "",
     "upstream_protocol": "http2",
     "certificate": "",
+    "custom_sni": "",
     "skip_verification": false,
     "vpn_mode": "general",
     "dns_upstreams": ["tls://1.1.1.1"],
@@ -79,6 +80,7 @@ package/etc/trusttunnel/config.json
 | `password` | string | `""` | Пароль endpoint |
 | `upstream_protocol` | string | `"http2"` | Протокол (`http2`/`http3`) |
 | `certificate` | string | `""` | PEM-сертификат endpoint (опционально) |
+| `custom_sni` | string | `""` | Переопределение TLS SNI отдельно от `hostname` (опционально) |
 | `skip_verification` | bool | `false` | Пропуск TLS-проверки |
 | `vpn_mode` | string | `"general"` | `general` или `selective` |
 | `dns_upstreams` | string[] | `["tls://1.1.1.1"]` | DNS через VPN |
@@ -130,6 +132,8 @@ package/etc/trusttunnel/config.json
 | `watchdog_failures` | number | `3` | Порог ошибок до рестарта |
 | `watchdog_check_url` | string | `"http://connectivitycheck.gstatic.com/generate_204"` | URL health-check |
 | `watchdog_check_timeout` | number | `5` | Таймаут проверки (сек) |
+
+Проверка связности watchdog выполняется через `opkgtun0` и требует `curl` с поддержкой `--interface`.
 
 ## Имена интерфейсов (Keenetic)
 
