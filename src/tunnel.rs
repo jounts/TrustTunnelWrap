@@ -1,6 +1,7 @@
 use crate::config::{generate_client_toml, TunnelSettings};
 use crate::logs;
 use crate::routing;
+use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -91,7 +92,7 @@ impl TunnelManager {
 
         let loglevel = self.settings.lock().unwrap().loglevel.clone();
 
-        let child = Command::new(CLIENT_BIN)
+        let mut child = Command::new(CLIENT_BIN)
             .arg("--config")
             .arg(CLIENT_TOML)
             .arg("--loglevel")
@@ -102,6 +103,40 @@ impl TunnelManager {
             .map_err(|e| format!("Failed to spawn {}: {}", CLIENT_BIN, e))?;
 
         let pid = child.id();
+        if let Some(stdout) = child.stdout.take() {
+            std::thread::Builder::new()
+                .name(format!("tt-client-stdout-{}", pid))
+                .spawn(move || {
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines() {
+                        match line {
+                            Ok(text) if !text.trim().is_empty() => {
+                                logs::global_buffer().push(format!("[client][stdout] {}", text));
+                            }
+                            Ok(_) => {}
+                            Err(_) => break,
+                        }
+                    }
+                })
+                .map_err(|e| format!("Failed to spawn stdout reader thread: {}", e))?;
+        }
+        if let Some(stderr) = child.stderr.take() {
+            std::thread::Builder::new()
+                .name(format!("tt-client-stderr-{}", pid))
+                .spawn(move || {
+                    let reader = BufReader::new(stderr);
+                    for line in reader.lines() {
+                        match line {
+                            Ok(text) if !text.trim().is_empty() => {
+                                logs::global_buffer().push(format!("[client][stderr] {}", text));
+                            }
+                            Ok(_) => {}
+                            Err(_) => break,
+                        }
+                    }
+                })
+                .map_err(|e| format!("Failed to spawn stderr reader thread: {}", e))?;
+        }
         *self.child.lock().unwrap() = Some(child);
         *self.connect_time.lock().unwrap() = Some(Instant::now());
 
@@ -187,6 +222,14 @@ impl TunnelManager {
     }
 
     pub fn stop(&self) {
+        self.running.store(false, Ordering::SeqCst);
+        self.kill_child();
+        self.teardown_if_active();
+    }
+
+    /// Stop monitor loop and fully terminate tunnel/routing.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub fn shutdown(&self) {
         self.should_stop.store(true, Ordering::SeqCst);
         self.running.store(false, Ordering::SeqCst);
         self.kill_child();
@@ -236,7 +279,8 @@ impl TunnelManager {
         self.start()
     }
 
-    fn respawn_with_delay(&self, reconnect_delay: u64) {
+    fn respawn_with_delay(&self) {
+        let reconnect_delay = self.settings.lock().unwrap().reconnect_delay;
         self.teardown_if_active();
 
         log::info!("Reconnecting in {} seconds...", reconnect_delay);
@@ -254,14 +298,14 @@ impl TunnelManager {
         }
     }
 
-    fn full_restart(&self, reason: &str, reconnect_delay: u64) {
+    fn full_restart(&self, reason: &str) {
         let msg = format!("[watchdog] {}, restarting...", reason);
         log::warn!("{}", msg);
         logs::global_buffer().push(msg.clone());
         self.status.lock().unwrap().last_error = msg;
 
         self.kill_child();
-        self.respawn_with_delay(reconnect_delay);
+        self.respawn_with_delay();
     }
 
     fn reroute(&self, new_wan: &str) {
@@ -278,8 +322,8 @@ impl TunnelManager {
         self.watchdog_failures.store(0, Ordering::SeqCst);
     }
 
-    fn run_watchdog_check(&self, reconnect_delay: u64) {
-        if !self.watchdog_enabled || !self.routing_active.load(Ordering::SeqCst) {
+    fn run_watchdog_check(&self) {
+        if !self.watchdog_enabled {
             return;
         }
 
@@ -289,8 +333,18 @@ impl TunnelManager {
         }
         *self.last_watchdog_check.lock().unwrap() = Instant::now();
 
+        if self.routing_enabled && !self.routing_active.load(Ordering::SeqCst) {
+            if !self.routing_setup_in_progress.load(Ordering::SeqCst) {
+                let msg = "[watchdog] routing inactive, retrying routing setup".to_string();
+                log::warn!("{}", msg);
+                logs::global_buffer().push(msg);
+                self.spawn_routing_setup();
+            }
+            return;
+        }
+
         if !routing::is_tun_alive() {
-            self.full_restart("OpkgTun0 interface disappeared", reconnect_delay);
+            self.full_restart("OpkgTun0 interface disappeared");
             return;
         }
 
@@ -313,7 +367,6 @@ impl TunnelManager {
             if fails >= self.watchdog_max_failures {
                 self.full_restart(
                     &format!("connectivity lost ({} failures)", fails),
-                    reconnect_delay,
                 );
             }
         } else {
@@ -327,8 +380,6 @@ impl TunnelManager {
     /// Main monitoring loop -- call from a dedicated thread.
     /// Watches the child process, respawns on crash, and runs watchdog checks.
     pub fn monitor_loop(self: &Arc<Self>) {
-        let reconnect_delay = self.settings.lock().unwrap().reconnect_delay;
-
         while !self.should_stop.load(Ordering::SeqCst) {
             if !self.running.load(Ordering::SeqCst) {
                 std::thread::sleep(Duration::from_millis(500));
@@ -369,9 +420,9 @@ impl TunnelManager {
                 && self.running.load(Ordering::SeqCst)
                 && !self.should_stop.load(Ordering::SeqCst)
             {
-                self.respawn_with_delay(reconnect_delay);
+                self.respawn_with_delay();
             } else if !exited {
-                self.run_watchdog_check(reconnect_delay);
+                self.run_watchdog_check();
             }
 
             std::thread::sleep(Duration::from_millis(500));

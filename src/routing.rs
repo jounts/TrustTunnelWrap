@@ -1,10 +1,7 @@
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
-use std::{
-    io::ErrorKind,
-    net::{IpAddr, SocketAddr},
-};
+use std::net::{IpAddr, SocketAddr};
 
 const TUN_NAME: &str = "tun0";
 const OPKG_TUN_NAME: &str = "opkgtun0";
@@ -521,18 +518,13 @@ pub fn check_connectivity(check_url: &str, timeout: Duration) -> bool {
     match run_cmd("curl", &args) {
         Ok(_) => true,
         Err(e) => {
-            let cmd_missing = std::io::Error::last_os_error().kind() == ErrorKind::NotFound
-                || e.contains("not found")
-                || e.contains("No such file or directory");
+            let lower = e.to_ascii_lowercase();
+            let cmd_missing = lower.contains("not found") || lower.contains("no such file");
             if cmd_missing {
-                match ureq::get(check_url).timeout(timeout).call() {
-                    Ok(resp) => (200..500).contains(&resp.status()),
-                    Err(ureq::Error::Status(code, _)) => (200..500).contains(&code),
-                    Err(err) => {
-                        log::debug!("[routing] fallback probe failed: {}", err);
-                        false
-                    }
-                }
+                let msg = "[routing] curl is unavailable; watchdog connectivity probe requires curl with --interface".to_string();
+                log::warn!("{}", msg);
+                crate::logs::global_buffer().push(msg);
+                false
             } else {
                 log::debug!("[routing] connectivity probe failed: {}", e);
                 false

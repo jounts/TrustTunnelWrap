@@ -131,6 +131,8 @@ package/etc/trusttunnel/config.json
 | `watchdog_check_url` | string | `"http://connectivitycheck.gstatic.com/generate_204"` | Health-check URL |
 | `watchdog_check_timeout` | number | `5` | Health-check timeout (seconds) |
 
+Watchdog connectivity checks are executed through `opkgtun0` and require `curl` with `--interface` support.
+
 ## Interface Names (Keenetic)
 
 - Linux interface: `opkgtun0` (lowercase), visible in `ip link`.
