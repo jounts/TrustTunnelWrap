@@ -179,11 +179,17 @@ impl WebUI {
 
     fn api_status(&self) -> Response<std::io::Cursor<Vec<u8>>> {
         let st = self.tunnel.get_status();
+        let stats = if st.connected {
+            read_opkgtun_stats()
+        } else {
+            None
+        };
         let body = serde_json::json!({
             "connected": st.connected,
             "uptime_seconds": st.uptime_seconds,
             "last_error": st.last_error,
             "pid": st.pid,
+            "interface_stats": stats,
         });
         json_response(200, &body.to_string())
     }
@@ -265,6 +271,28 @@ impl WebUI {
         });
         json_response(200, &body.to_string())
     }
+}
+
+fn read_u64_trimmed(path: &str) -> Option<u64> {
+    std::fs::read_to_string(path)
+        .ok()?
+        .trim()
+        .parse::<u64>()
+        .ok()
+}
+
+fn read_opkgtun_stats() -> Option<serde_json::Value> {
+    const BASE: &str = "/sys/class/net/opkgtun0/statistics";
+    let rx_bytes = read_u64_trimmed(&format!("{}/rx_bytes", BASE))?;
+    let tx_bytes = read_u64_trimmed(&format!("{}/tx_bytes", BASE))?;
+    let rx_packets = read_u64_trimmed(&format!("{}/rx_packets", BASE))?;
+    let tx_packets = read_u64_trimmed(&format!("{}/tx_packets", BASE))?;
+    Some(serde_json::json!({
+        "rx_bytes": rx_bytes,
+        "tx_bytes": tx_bytes,
+        "rx_packets": rx_packets,
+        "tx_packets": tx_packets,
+    }))
 }
 
 fn json_response(status: u16, body: &str) -> Response<std::io::Cursor<Vec<u8>>> {

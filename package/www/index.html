@@ -51,6 +51,12 @@ footer{text-align:center;padding:1rem;color:var(--muted);font-size:.82rem}
 <div id="info" class="hide" style="margin-top:.5rem;font-size:.9rem">
 <span>Uptime: <b id="uptime">-</b></span> &nbsp; <span>PID: <b id="pid">-</b></span>
 </div>
+<div id="iface-stats" class="hide" style="margin-top:.45rem;font-size:.9rem">
+<span>RX bytes: <b id="rx-bytes">-</b></span> &nbsp;
+<span>TX bytes: <b id="tx-bytes">-</b></span> &nbsp;
+<span>RX packets: <b id="rx-packets">-</b></span> &nbsp;
+<span>TX packets: <b id="tx-packets">-</b></span>
+</div>
 <div id="last-err" class="err hide"></div>
 </div>
 
@@ -140,16 +146,27 @@ function poll(){clearInterval(sp);clearInterval(lp);updateStatus();loadLogs();sp
 async function updateStatus(){
   try{
     const s=await api('/status');
-    const el=document.getElementById('conn-st'),info=document.getElementById('info'),btn=document.getElementById('conn-btn'),le=document.getElementById('last-err');
+    const el=document.getElementById('conn-st'),info=document.getElementById('info'),btn=document.getElementById('conn-btn'),le=document.getElementById('last-err'),stats=document.getElementById('iface-stats');
     if(s.connected){el.textContent='Подключено';el.className='st on';info.classList.remove('hide');
       document.getElementById('uptime').textContent=fmtUp(s.uptime_seconds);
-      document.getElementById('pid').textContent=s.pid||'-';btn.textContent='Отключить'}
-    else{el.textContent='Отключено';el.className='st off';info.classList.add('hide');btn.textContent='Подключить'}
+      document.getElementById('pid').textContent=s.pid||'-';btn.textContent='Отключить';
+      if(s.interface_stats){
+        document.getElementById('rx-bytes').textContent=fmtNum(s.interface_stats.rx_bytes);
+        document.getElementById('tx-bytes').textContent=fmtNum(s.interface_stats.tx_bytes);
+        document.getElementById('rx-packets').textContent=fmtNum(s.interface_stats.rx_packets);
+        document.getElementById('tx-packets').textContent=fmtNum(s.interface_stats.tx_packets);
+        stats.classList.remove('hide');
+      }else{
+        stats.classList.add('hide');
+      }
+    }
+    else{el.textContent='Отключено';el.className='st off';info.classList.add('hide');stats.classList.add('hide');btn.textContent='Подключить'}
     if(s.last_error){le.textContent=s.last_error;le.classList.remove('hide')}else{le.classList.add('hide')}
   }catch(e){}
 }
 
 function fmtUp(s){if(!s||s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m '+s%60+'s';return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m'}
+function fmtNum(n){return Number.isFinite(n)?n.toLocaleString('ru-RU'):'-'}
 
 async function loadCfg(){
   try{
