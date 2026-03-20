@@ -23,6 +23,7 @@ package/etc/trusttunnel/config.json
     "password": "",
     "upstream_protocol": "http2",
     "certificate": "",
+    "custom_sni": "",
     "skip_verification": false,
     "vpn_mode": "general",
     "dns_upstreams": ["tls://1.1.1.1"],
@@ -79,6 +80,7 @@ package/etc/trusttunnel/config.json
 | `password` | string | `""` | Endpoint password |
 | `upstream_protocol` | string | `"http2"` | Upstream protocol (`http2`/`http3`) |
 | `certificate` | string | `""` | Optional endpoint PEM certificate |
+| `custom_sni` | string | `""` | Optional TLS SNI override (separate from `hostname`) |
 | `skip_verification` | bool | `false` | Skip TLS verification |
 | `vpn_mode` | string | `"general"` | `general` or `selective` |
 | `dns_upstreams` | string[] | `["tls://1.1.1.1"]` | DNS upstreams through VPN |

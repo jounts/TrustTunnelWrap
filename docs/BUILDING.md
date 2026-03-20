@@ -66,7 +66,7 @@ Release profile in `Cargo.toml` enables size-oriented optimization (`opt-level =
 ### 1) Download pre-built TrustTunnelClient
 
 ```sh
-./scripts/download-client.sh v0.99.105 linux-aarch64 client_bin
+./scripts/download-client.sh v1.0.23 linux-aarch64 client_bin
 ```
 
 ### 2) Build wrapper binary

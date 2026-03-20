@@ -12,3 +12,9 @@ All notable changes to this project are documented in this file.
 - Retry routing setup from watchdog when routing has not become active yet.
 - Use the latest `reconnect_delay` from current settings for each respawn cycle.
 - Make watchdog connectivity checks fail closed when `curl` is unavailable (to avoid false positives outside `opkgtun0`).
+
+### Changed
+
+- Added `tunnel.custom_sni` support in wrapper config and generated `trusttunnel_client` TOML for compatibility with TrustTunnelClient `>= 1.0.3`.
+- Endpoint address hostnames are now resolved for server host-route setup, preserving anti-loop routing behavior with TrustTunnelClient `>= 1.0.6`.
+- Updated build/download docs examples to TrustTunnelClient `v1.0.23`.

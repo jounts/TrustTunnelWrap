@@ -1,6 +1,7 @@
 use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
+use std::net::ToSocketAddrs;
 use std::net::{IpAddr, SocketAddr};
 
 const TUN_NAME: &str = "tun0";
@@ -73,11 +74,37 @@ fn parse_endpoint_ip(raw: &str) -> Option<IpAddr> {
     None
 }
 
+fn resolve_endpoint_ips(raw: &str) -> Vec<IpAddr> {
+    if let Some(ip) = parse_endpoint_ip(raw) {
+        return vec![ip];
+    }
+
+    // TrustTunnelClient supports hostnames in addresses (e.g. host:port).
+    // Resolve them here so host routes still protect against routing loops.
+    let mut out = Vec::new();
+    if let Ok(iter) = raw.to_socket_addrs() {
+        for sock in iter {
+            let ip = sock.ip();
+            if !out.contains(&ip) {
+                out.push(ip);
+            }
+        }
+    } else {
+        log::warn!("[routing] cannot resolve endpoint address '{}'", raw);
+    }
+    out
+}
+
 fn extract_server_ips(addresses: &[String]) -> Vec<IpAddr> {
-    addresses
-        .iter()
-        .filter_map(|addr| parse_endpoint_ip(addr))
-        .collect()
+    let mut out = Vec::new();
+    for addr in addresses {
+        for ip in resolve_endpoint_ips(addr) {
+            if !out.contains(&ip) {
+                out.push(ip);
+            }
+        }
+    }
+    out
 }
 
 fn delete_server_host_route(ip: IpAddr) {

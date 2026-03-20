@@ -6,6 +6,7 @@
     "password": "",
     "upstream_protocol": "http2",
     "certificate": "",
+    "custom_sni": "",
     "skip_verification": false,
     "vpn_mode": "general",
     "dns_upstreams": ["tls://1.1.1.1"],
