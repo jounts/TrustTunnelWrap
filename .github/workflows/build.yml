@@ -14,10 +14,10 @@ on:
       client_version:
         description: 'TrustTunnelClient release tag'
         required: false
-        default: 'v1.0.23'
+        default: 'v0.99.105'
 
 env:
-  CLIENT_VERSION: ${{ github.event.inputs.client_version || 'v1.0.23' }}
+  CLIENT_VERSION: ${{ github.event.inputs.client_version || 'v0.99.105' }}
 
 jobs:
   prepare:

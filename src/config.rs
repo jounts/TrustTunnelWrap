@@ -32,8 +32,6 @@ pub struct TunnelSettings {
     #[serde(default)]
     pub certificate: String,
     #[serde(default)]
-    pub custom_sni: String,
-    #[serde(default)]
     pub skip_verification: bool,
     #[serde(default = "default_vpn_mode")]
     pub vpn_mode: String,
@@ -259,7 +257,6 @@ impl Default for TunnelSettings {
             password: String::new(),
             upstream_protocol: default_upstream_protocol(),
             certificate: String::new(),
-            custom_sni: String::new(),
             skip_verification: false,
             vpn_mode: default_vpn_mode(),
             dns_upstreams: vec!["tls://1.1.1.1".into()],
@@ -405,9 +402,6 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
     if !settings.certificate.is_empty() {
         toml.push_str(&format!("certificate = \"{}\"\n", settings.certificate));
     }
-    if !settings.custom_sni.is_empty() {
-        toml.push_str(&format!("custom_sni = \"{}\"\n", settings.custom_sni));
-    }
 
     toml.push_str("\n[listener.tun]\n");
     toml.push_str(&format!("bound_if = \"{}\"\n", settings.bound_if));
@@ -468,14 +462,12 @@ mod tests {
             addresses: vec!["1.2.3.4:443".into()],
             username: "user".into(),
             password: "pass".into(),
-            custom_sni: "sni.example.com".into(),
             ..Default::default()
         };
         let toml = generate_client_toml(&s);
         assert!(toml.contains("[endpoint]"));
         assert!(toml.contains("hostname = \"vpn.example.com\""));
         assert!(toml.contains("username = \"user\""));
-        assert!(toml.contains("custom_sni = \"sni.example.com\""));
         assert!(toml.contains("[listener.tun]"));
     }
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Download pre-built trusttunnel_client from GitHub Releases.
 # Usage: ./download-client.sh <version_tag> <arch> <output_dir>
-# Example: ./download-client.sh v1.0.23 linux-aarch64 client_bin
+# Example: ./download-client.sh v0.99.105 linux-aarch64 client_bin
 
 set -euo pipefail
 
