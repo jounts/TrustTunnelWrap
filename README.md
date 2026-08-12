@@ -49,6 +49,10 @@ Web UI default URL:
 http://<router-ip>:8080
 ```
 
+The Web UI intentionally uses plain HTTP and binds to `0.0.0.0` by default. Do not
+expose port 8080 outside a trusted LAN: session tokens can be intercepted. Restrict
+access with firewall rules when needed.
+
 ## Remove
 
 ```sh

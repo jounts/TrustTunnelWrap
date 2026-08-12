@@ -1,6 +1,7 @@
 use crate::config::{generate_client_toml, TunnelSettings};
 use crate::logs;
 use crate::routing;
+use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
@@ -36,6 +37,8 @@ pub struct TunnelManager {
     watchdog_failures: AtomicU32,
     last_watchdog_check: Mutex<Instant>,
     last_wan_interface: Arc<Mutex<String>>,
+    lifecycle: Mutex<()>,
+    routing_setup_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 impl TunnelManager {
@@ -58,6 +61,8 @@ impl TunnelManager {
             watchdog_failures: AtomicU32::new(0),
             last_watchdog_check: Mutex::new(Instant::now()),
             last_wan_interface: Arc::new(Mutex::new(String::new())),
+            lifecycle: Mutex::new(()),
+            routing_setup_handle: Mutex::new(None),
         })
     }
 
@@ -83,7 +88,8 @@ impl TunnelManager {
         if let Some(parent) = std::path::Path::new(CLIENT_TOML).parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
         }
-        std::fs::write(CLIENT_TOML, toml_content).map_err(|e| format!("write toml failed: {}", e))
+        crate::config::write_private_atomic(CLIENT_TOML, &toml_content)
+            .map_err(|e| format!("write toml failed: {}", e))
     }
 
     fn spawn_process(&self) -> Result<(), String> {
@@ -91,7 +97,7 @@ impl TunnelManager {
 
         let loglevel = self.settings.lock().unwrap().loglevel.clone();
 
-        let child = Command::new(CLIENT_BIN)
+        let mut child = Command::new(CLIENT_BIN)
             .arg("--config")
             .arg(CLIENT_TOML)
             .arg("--loglevel")
@@ -102,6 +108,22 @@ impl TunnelManager {
             .map_err(|e| format!("Failed to spawn {}: {}", CLIENT_BIN, e))?;
 
         let pid = child.id();
+        if let Some(stdout) = child.stdout.take() {
+            if let Err(error) = std::thread::Builder::new()
+                .name("tunnel-stdout".into())
+                .spawn(move || read_client_output(BufReader::new(stdout), "stdout"))
+            {
+                log::error!("failed to spawn stdout reader: {}", error);
+            }
+        }
+        if let Some(stderr) = child.stderr.take() {
+            if let Err(error) = std::thread::Builder::new()
+                .name("tunnel-stderr".into())
+                .spawn(move || read_client_output(BufReader::new(stderr), "stderr"))
+            {
+                log::error!("failed to spawn stderr reader: {}", error);
+            }
+        }
         *self.child.lock().unwrap() = Some(child);
         *self.connect_time.lock().unwrap() = Some(Instant::now());
 
@@ -118,6 +140,7 @@ impl TunnelManager {
     }
 
     pub fn start(&self) -> Result<(), String> {
+        let _lifecycle = self.lifecycle.lock().unwrap();
         if self.running.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -167,10 +190,11 @@ impl TunnelManager {
             });
         match spawn_result {
             Ok(handle) => {
-                std::thread::spawn(move || {
+                let wrapped = std::thread::spawn(move || {
                     let _ = handle.join();
                     in_progress.store(false, Ordering::SeqCst);
                 });
+                *self.routing_setup_handle.lock().unwrap() = Some(wrapped);
             }
             Err(e) => {
                 in_progress.store(false, Ordering::SeqCst);
@@ -187,9 +211,13 @@ impl TunnelManager {
     }
 
     pub fn stop(&self) {
+        let _lifecycle = self.lifecycle.lock().unwrap();
         self.should_stop.store(true, Ordering::SeqCst);
         self.running.store(false, Ordering::SeqCst);
         self.kill_child();
+        if let Some(handle) = self.routing_setup_handle.lock().unwrap().take() {
+            let _ = handle.join();
+        }
         self.teardown_if_active();
     }
 
@@ -375,6 +403,22 @@ impl TunnelManager {
             }
 
             std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+}
+
+fn read_client_output<R: BufRead>(reader: R, stream: &str) {
+    for line in reader.lines() {
+        match line {
+            Ok(line) => {
+                let message = format!("[client:{}] {}", stream, line);
+                log::info!("{}", message);
+                logs::global_buffer().push(message);
+            }
+            Err(error) => {
+                log::debug!("[client:{}] output read failed: {}", stream, error);
+                break;
+            }
         }
     }
 }

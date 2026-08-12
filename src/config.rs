@@ -37,7 +37,7 @@ pub struct TunnelSettings {
     pub skip_verification: bool,
     #[serde(default = "default_vpn_mode")]
     pub vpn_mode: String,
-    #[serde(default)]
+    #[serde(default = "default_dns_upstreams")]
     pub dns_upstreams: Vec<String>,
     #[serde(default)]
     pub killswitch_enabled: bool,
@@ -47,9 +47,9 @@ pub struct TunnelSettings {
     pub post_quantum_group_enabled: bool,
     #[serde(default)]
     pub exclusions: Vec<String>,
-    #[serde(default)]
+    #[serde(default = "default_included_routes")]
     pub included_routes: Vec<String>,
-    #[serde(default)]
+    #[serde(default = "default_excluded_routes")]
     pub excluded_routes: Vec<String>,
     #[serde(default = "default_mtu")]
     pub mtu_size: u16,
@@ -159,6 +159,19 @@ fn default_mtu() -> u16 {
 }
 fn default_reconnect_delay() -> u64 {
     5
+}
+fn default_dns_upstreams() -> Vec<String> {
+    vec!["tls://1.1.1.1".into()]
+}
+fn default_included_routes() -> Vec<String> {
+    vec!["0.0.0.0/0".into(), "2000::/3".into()]
+}
+fn default_excluded_routes() -> Vec<String> {
+    vec![
+        "10.0.0.0/8".into(),
+        "172.16.0.0/12".into(),
+        "192.168.0.0/16".into(),
+    ]
 }
 fn default_loglevel() -> String {
     "info".into()
@@ -315,12 +328,14 @@ impl Default for LogSettings {
 impl WrapperConfig {
     pub fn load(path: &str) -> Result<Self, String> {
         if !Path::new(path).exists() {
-            log::warn!("Config not found at {}, using defaults", path);
-            return Ok(Self::default());
+            return Err(format!("Config not found at {}", path));
         }
         let content = fs::read_to_string(path)
             .map_err(|e| format!("Failed to read config {}: {}", path, e))?;
-        serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))
+        let config: Self =
+            serde_json::from_str(&content).map_err(|e| format!("Failed to parse config: {}", e))?;
+        config.validate()?;
+        Ok(config)
     }
 
     pub fn save(&self, path: &str) -> Result<(), String> {
@@ -329,8 +344,75 @@ impl WrapperConfig {
         }
         let content = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
-        fs::write(path, content).map_err(|e| format!("Failed to write config: {}", e))
+        write_private_atomic(path, &content).map_err(|e| format!("Failed to write config: {}", e))
     }
+
+    pub fn validate(&self) -> Result<(), String> {
+        self.tunnel.validate()?;
+        if self.webui.port == 0 || self.webui.ndm_port == 0 {
+            return Err("WebUI and NDM ports must be between 1 and 65535".into());
+        }
+        if self.logging.max_lines == 0 {
+            return Err("logging.max_lines must be greater than zero".into());
+        }
+        if self.routing.watchdog_enabled
+            && (self.routing.watchdog_interval == 0
+                || self.routing.watchdog_failures == 0
+                || self.routing.watchdog_check_timeout == 0)
+        {
+            return Err(
+                "watchdog_interval, watchdog_failures and watchdog_check_timeout must be greater than zero".into(),
+            );
+        }
+        Ok(())
+    }
+}
+
+impl TunnelSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if !(576..=9000).contains(&self.mtu_size) {
+            return Err("tunnel.mtu_size must be between 576 and 9000".into());
+        }
+        if self.reconnect_delay == 0 {
+            return Err("tunnel.reconnect_delay must be greater than zero".into());
+        }
+        if !matches!(self.upstream_protocol.as_str(), "http2" | "http3") {
+            return Err("tunnel.upstream_protocol must be http2 or http3".into());
+        }
+        if !matches!(self.vpn_mode.as_str(), "general" | "selective") {
+            return Err("tunnel.vpn_mode must be general or selective".into());
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn write_private_atomic(path: &str, content: &str) -> Result<(), String> {
+    let tmp_path = format!("{}.tmp.{}", path, std::process::id());
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&tmp_path)
+            .map_err(|e| format!("open {}: {}", tmp_path, e))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("write {}: {}", tmp_path, e))?;
+        file.sync_all()
+            .map_err(|e| format!("sync {}: {}", tmp_path, e))?;
+    }
+    #[cfg(not(unix))]
+    fs::write(&tmp_path, content).map_err(|e| format!("write {}: {}", tmp_path, e))?;
+    #[cfg(windows)]
+    if Path::new(path).exists() {
+        fs::remove_file(path).map_err(|e| format!("replace {}: {}", path, e))?;
+    }
+    fs::rename(&tmp_path, path).map_err(|e| {
+        let _ = fs::remove_file(&tmp_path);
+        format!("rename {} to {}: {}", tmp_path, path, e)
+    })
 }
 
 /// Generates a valid TOML config file for `trusttunnel_client`.
@@ -475,15 +557,21 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
 }
 
 fn toml_string(value: &str) -> String {
-    format!(
-        "\"{}\"",
-        value
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t")
-    )
+    let mut escaped = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\u{08}' => escaped.push_str("\\b"),
+            '\t' => escaped.push_str("\\t"),
+            '\n' => escaped.push_str("\\n"),
+            '\u{0c}' => escaped.push_str("\\f"),
+            '\r' => escaped.push_str("\\r"),
+            c if c.is_control() => escaped.push_str(&format!("\\u{:04X}", c as u32)),
+            c => escaped.push(c),
+        }
+    }
+    format!("\"{}\"", escaped)
 }
 
 #[cfg(test)]
@@ -530,5 +618,40 @@ mod tests {
         assert_eq!(parse_size_with_units("1 G"), Some(1024 * 1024 * 1024));
         assert_eq!(parse_size_with_units(""), None);
         assert_eq!(parse_size_with_units("oops"), None);
+    }
+
+    #[test]
+    fn partial_tunnel_config_keeps_non_empty_defaults() {
+        let settings: TunnelSettings =
+            serde_json::from_str(r#"{"hostname":"vpn.example.com"}"#).unwrap();
+        assert_eq!(settings.dns_upstreams, vec!["tls://1.1.1.1"]);
+        assert_eq!(settings.included_routes, vec!["0.0.0.0/0", "2000::/3"]);
+        assert_eq!(
+            settings.excluded_routes,
+            vec!["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",]
+        );
+    }
+
+    #[test]
+    fn validation_rejects_invalid_tunnel_values() {
+        let mut settings = TunnelSettings {
+            mtu_size: 0,
+            ..Default::default()
+        };
+        assert!(settings.validate().is_err());
+
+        settings.mtu_size = 1280;
+        settings.upstream_protocol = "invalid".into();
+        assert!(settings.validate().is_err());
+    }
+
+    #[test]
+    fn control_characters_are_escaped_in_toml() {
+        let settings = TunnelSettings {
+            username: "user\u{0001}name".into(),
+            ..Default::default()
+        };
+        let toml = generate_client_toml(&settings);
+        assert!(toml.contains("username = \"user\\u0001name\""));
     }
 }

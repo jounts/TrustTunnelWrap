@@ -6,6 +6,10 @@ Main wrapper config path:
 /opt/etc/trusttunnel/config.json
 ```
 
+If the configuration file is missing, the wrapper exits instead of silently starting
+with defaults. The configuration and generated client TOML are written with `0600`
+permissions because they contain passwords.
+
 Default template is installed from:
 
 ```text

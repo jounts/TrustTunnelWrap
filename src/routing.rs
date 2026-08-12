@@ -3,7 +3,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use std::{
     io::ErrorKind,
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
 };
 
 const TUN_NAME: &str = "tun0";
@@ -77,10 +77,33 @@ fn parse_endpoint_ip(raw: &str) -> Option<IpAddr> {
 }
 
 fn extract_server_ips(addresses: &[String]) -> Vec<IpAddr> {
-    addresses
-        .iter()
-        .filter_map(|addr| parse_endpoint_ip(addr))
-        .collect()
+    let mut result = Vec::new();
+    for address in addresses {
+        if let Some(ip) = parse_endpoint_ip(address) {
+            if !result.contains(&ip) {
+                result.push(ip);
+            }
+            continue;
+        }
+
+        let resolved = address
+            .rsplit_once(':')
+            .and_then(|(host, port)| port.parse::<u16>().ok().map(|port| (host, port)))
+            .and_then(|(host, port)| {
+                (host.trim_matches(['[', ']']), port)
+                    .to_socket_addrs()
+                    .ok()
+                    .and_then(|mut addrs| addrs.next())
+            });
+        if let Some(socket) = resolved {
+            if !result.contains(&socket.ip()) {
+                result.push(socket.ip());
+            }
+        } else {
+            log::warn!("[routing] could not resolve endpoint address {}", address);
+        }
+    }
+    result
 }
 
 fn delete_server_host_route(ip: IpAddr) {
@@ -159,7 +182,11 @@ fn summarize_ndmc_output(_cmd: &str, output: &str) -> String {
     let trimmed = output.trim();
     const MAX_LEN: usize = 240;
     if trimmed.len() > MAX_LEN {
-        format!("{}...", &trimmed[..MAX_LEN])
+        let mut end = MAX_LEN;
+        while !trimmed.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}...", &trimmed[..end])
     } else {
         trimmed.to_string()
     }
@@ -414,7 +441,10 @@ pub fn setup_routing(server_addresses: &[String]) -> Result<String, String> {
                     // Two-phase swap with rollback: preserve existing opkgtun0 until
                     // fresh tun0 is successfully moved into place.
                     run_cmd_ok("ip", &["link", "set", OPKG_TUN_NAME, "down"]);
-                    run_cmd("ip", &["link", "set", OPKG_TUN_NAME, "name", OPKG_TUN_BACKUP_NAME])?;
+                    run_cmd(
+                        "ip",
+                        &["link", "set", OPKG_TUN_NAME, "name", OPKG_TUN_BACKUP_NAME],
+                    )?;
 
                     match run_cmd("ip", &["link", "set", TUN_NAME, "name", OPKG_TUN_NAME]) {
                         Ok(_) => {
@@ -551,9 +581,36 @@ pub fn teardown_routing(server_addresses: &[String]) {
         delete_server_host_route(ip);
     }
 
-    // Shell behavior: bring interface down and recreate it on next start.
+    // Remove the default routes, then bring the interface down for the next start.
+    ndmc_soft(&format!("no ip route default {}", NDM_IF_NAME));
+    ndmc_soft(&format!("no ipv6 route default {}", NDM_IF_NAME));
     run_cmd_ok("ip", &["link", "set", OPKG_TUN_NAME, "down"]);
 
     log::info!("[routing] teardown complete");
     crate::logs::global_buffer().push("[routing] teardown complete".into());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ndmc_summary_does_not_split_utf8() {
+        let output = "я".repeat(200);
+        let summary = summarize_ndmc_output("test", &output);
+        assert!(summary.ends_with("..."));
+        assert!(summary.is_char_boundary(summary.len() - 3));
+    }
+
+    #[test]
+    fn endpoint_ip_parser_handles_ip_and_socket() {
+        assert_eq!(
+            parse_endpoint_ip("1.2.3.4:443"),
+            Some("1.2.3.4".parse().unwrap())
+        );
+        assert_eq!(
+            parse_endpoint_ip("2001:db8::1"),
+            Some("2001:db8::1".parse().unwrap())
+        );
+    }
 }

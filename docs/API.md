@@ -2,6 +2,9 @@
 
 HTTP API for `trusttunnel-keenetic`. By default, the server listens on `http://0.0.0.0:8080`.
 
+> WebUI uses plain HTTP without TLS. Session tokens are sent in cleartext, so port
+> 8080 should be restricted with a firewall or used only on a trusted LAN.
+
 Russian version: [`API_RU.md`](API_RU.md)
 
 ## Authentication

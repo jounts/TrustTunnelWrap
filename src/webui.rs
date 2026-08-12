@@ -87,6 +87,10 @@ impl WebUI {
         };
 
         log::info!("WebUI listening on http://{}", addr);
+        log::warn!(
+            "WebUI is using unauthenticated transport (HTTP) on {}; session tokens can be intercepted",
+            addr
+        );
         logs::global_buffer().push(format!("[webui] listening on http://{}", addr));
 
         for request in server.incoming_requests() {
@@ -204,6 +208,12 @@ impl WebUI {
                 )
             }
         };
+        if let Err(e) = new_tunnel.validate() {
+            return json_response(
+                400,
+                &serde_json::json!({"error": format!("invalid config: {}", e)}).to_string(),
+            );
+        }
 
         // Save first, then swap in-memory state to keep API semantics transactional.
         {
