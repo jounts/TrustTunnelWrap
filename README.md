@@ -49,6 +49,12 @@ Web UI default URL:
 http://<router-ip>:8080
 ```
 
+In the tunnel configuration section, choose either **Manual** to enter the full
+configuration form or **DeepLink** to import a TrustTunnel `tt://?...` link.
+DeepLink import only fills the manual form; review the values and click **Save**
+to persist the configuration. Links contain endpoint credentials in encoded but
+unencrypted form and must be treated as sensitive data.
+
 The Web UI intentionally uses plain HTTP and binds to `0.0.0.0` by default. Do not
 expose port 8080 outside a trusted LAN: session tokens can be intercepted. Restrict
 access with firewall rules when needed.

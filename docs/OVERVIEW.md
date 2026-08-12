@@ -5,6 +5,7 @@
 ## What It Provides
 
 - Embedded Web UI on `:8080` by default
+- Manual and TrustTunnel DeepLink modes for tunnel configuration
 - Authentication through the router NDM API (same local router accounts)
 - Runtime control (`connect`, `disconnect`, `restart`) via UI/API
 - In-memory session handling (token TTL: 1 hour, extended on activity)
@@ -38,6 +39,7 @@ trusttunnel-keenetic (Rust wrapper)
 - Web UI authorization uses router credentials through NDM API.
 - Session tokens are memory-only and not persisted.
 - Endpoint credentials are stored in `/opt/etc/trusttunnel/config.json`; keep permissions strict (`chmod 600`).
+- DeepLinks contain endpoint credentials in encoded but unencrypted form; review imported values before saving.
 - If UI should not be remotely reachable, set `webui.bind` to `127.0.0.1`.
 
 ## Related Docs
