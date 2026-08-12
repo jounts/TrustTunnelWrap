@@ -18,6 +18,7 @@ package/etc/trusttunnel/config.json
 {
   "tunnel": {
     "hostname": "",
+    "custom_sni": "",
     "addresses": [],
     "username": "",
     "password": "",
@@ -74,6 +75,7 @@ package/etc/trusttunnel/config.json
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `hostname` | string | `""` | Endpoint hostname (SNI) |
+| `custom_sni` | string | `""` | Optional TLS SNI override, separate from endpoint hostname |
 | `addresses` | string[] | `[]` | Endpoint addresses (`IP:port`) |
 | `username` | string | `""` | Endpoint username |
 | `password` | string | `""` | Endpoint password |
@@ -81,7 +83,7 @@ package/etc/trusttunnel/config.json
 | `certificate` | string | `""` | Optional endpoint PEM certificate |
 | `skip_verification` | bool | `false` | Skip TLS verification |
 | `vpn_mode` | string | `"general"` | `general` or `selective` |
-| `dns_upstreams` | string[] | `["tls://1.1.1.1"]` | DNS upstreams through VPN |
+| `dns_upstreams` | string[] | `["tls://1.1.1.1"]` | DNS upstreams through VPN; generated in the client's `[endpoint]` section |
 | `killswitch_enabled` | bool | `false` | Block traffic outside VPN |
 | `killswitch_allow_ports` | number[] | `[]` | Allowed local ports while killswitch is active |
 | `post_quantum_group_enabled` | bool | `true` | Enable post-quantum group negotiation |
@@ -135,6 +137,16 @@ package/etc/trusttunnel/config.json
 
 - Linux interface: `opkgtun0` (lowercase), visible in `ip link`.
 - NDM interface: `OpkgTun0` (CamelCase), visible in `ndmc -c 'show interface'`.
+
+## NDMS 5: DNS routes and package reinstall
+
+On Keenetic/Netcraze (NDMS 5), **Routing → DNS routes** creates `object-group fqdn` entries and `dns-proxy` rules such as `route object-group … OpkgTun0 …`.
+
+Package scripts **do not** edit `dns-proxy`. However, `opkg remove trusttunnel-keenetic` tears down the NDM interface (`no interface OpkgTun0`). The firmware may then **drop `dns-proxy` rules that reference a missing `OpkgTun0`**, while **domain lists (`object-group`) often remain**.
+
+**You can restore those routes** — after installing the new package and starting the service, `OpkgTun0` comes back, but you must **re-attach** the DNS routes (via the web UI or CLI), or **restore** the relevant snippet from a saved `show running-config` / router backup.
+
+**Tip:** before upgrading the package, save the `dns-proxy` block that references `OpkgTun0` (or the full `running-config`) so you can reapply the same lines after the upgrade.
 
 ## Related Docs
 
