@@ -2,6 +2,28 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Fixed
+
+- Drain TrustTunnelClient output continuously so full stdout/stderr pipes cannot stall the client.
+- Serialize tunnel lifecycle operations and wait for routing setup during shutdown.
+- Remove tunnel default routes during routing teardown.
+- Resolve hostname endpoint addresses when installing server host routes.
+- Preserve meaningful tunnel defaults when loading partial configuration objects.
+- Fail fast when the configured wrapper config file is missing.
+- Validate MTU, reconnect, watchdog, protocol, VPN mode, port, and log buffer settings.
+- Prevent UTF-8 boundary panics and escape TOML control characters correctly.
+- Write wrapper and client configuration files atomically with restrictive permissions.
+
+### Tests
+
+- Add coverage for partial-config defaults, validation, TOML escaping, endpoint parsing, and UTF-8 output summaries.
+
+### Documentation
+
+- Warn that the WebUI remains plain HTTP on `0.0.0.0` and session tokens can be intercepted.
+
 ## v0.1.2
 
 ### Fixed
