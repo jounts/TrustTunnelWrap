@@ -1,6 +1,7 @@
 {
   "tunnel": {
     "hostname": "",
+    "custom_sni": "",
     "addresses": [],
     "username": "",
     "password": "",
