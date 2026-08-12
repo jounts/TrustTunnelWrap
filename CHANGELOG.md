@@ -24,6 +24,16 @@ All notable changes to this project are documented in this file.
 
 - Warn that the WebUI remains plain HTTP on `0.0.0.0` and session tokens can be intercepted.
 
+## v0.1.3
+
+### Changed
+
+- Add `tunnel.custom_sni` support for TrustTunnelClient `>= 1.0.3`.
+- Update wrapper configuration and generated TOML for TrustTunnelClient `v1.0.49`.
+- Move `dns_upstreams` into the client TOML `[endpoint]` section.
+- Add TOML string escaping for endpoint credentials, SNI, routes, and listener settings.
+- Update CI, client download scripts, and build documentation to use TrustTunnelClient `v1.0.49`.
+
 ## v0.1.2
 
 ### Fixed
