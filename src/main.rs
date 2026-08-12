@@ -167,7 +167,7 @@ fn ctrlc_handler(tunnel: Arc<tunnel::TunnelManager>) {
                 match mask.wait() {
                     Ok(sig) => {
                         log::info!("Received signal {:?}, shutting down...", sig);
-                        tunnel.shutdown();
+                        tunnel.stop();
                         std::process::exit(0);
                     }
                     Err(_) => continue,

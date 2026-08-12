@@ -9,7 +9,6 @@ Russian docs index: [`README_RU.md`](README_RU.md)
 - Configuration reference: [`CONFIGURATION.md`](CONFIGURATION.md)
 - HTTP API reference: [`API.md`](API.md)
 - Build, packaging, and development: [`BUILDING.md`](BUILDING.md)
-- Project changelog: [`../CHANGELOG.md`](../CHANGELOG.md)
 
 ## Russian Versions
 

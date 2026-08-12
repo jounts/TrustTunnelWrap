@@ -22,6 +22,8 @@ pub struct TunnelSettings {
     #[serde(default)]
     pub hostname: String,
     #[serde(default)]
+    pub custom_sni: String,
+    #[serde(default)]
     pub addresses: Vec<String>,
     #[serde(default)]
     pub username: String,
@@ -31,8 +33,6 @@ pub struct TunnelSettings {
     pub upstream_protocol: String,
     #[serde(default)]
     pub certificate: String,
-    #[serde(default)]
-    pub custom_sni: String,
     #[serde(default)]
     pub skip_verification: bool,
     #[serde(default = "default_vpn_mode")]
@@ -254,12 +254,12 @@ impl Default for TunnelSettings {
     fn default() -> Self {
         Self {
             hostname: String::new(),
+            custom_sni: String::new(),
             addresses: Vec::new(),
             username: String::new(),
             password: String::new(),
             upstream_protocol: default_upstream_protocol(),
             certificate: String::new(),
-            custom_sni: String::new(),
             skip_verification: false,
             vpn_mode: default_vpn_mode(),
             dns_upstreams: vec!["tls://1.1.1.1".into()],
@@ -337,8 +337,8 @@ impl WrapperConfig {
 pub fn generate_client_toml(settings: &TunnelSettings) -> String {
     let mut toml = String::with_capacity(1024);
 
-    toml.push_str(&format!("loglevel = \"{}\"\n", settings.loglevel));
-    toml.push_str(&format!("vpn_mode = \"{}\"\n", settings.vpn_mode));
+    toml.push_str(&format!("loglevel = {}\n", toml_string(&settings.loglevel)));
+    toml.push_str(&format!("vpn_mode = {}\n", toml_string(&settings.vpn_mode)));
     toml.push_str(&format!(
         "killswitch_enabled = {}\n",
         settings.killswitch_enabled
@@ -361,56 +361,64 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
         settings
             .exclusions
             .iter()
-            .map(|s| format!("\"{}\"", s))
+            .map(|s| toml_string(s))
             .collect::<Vec<_>>()
             .join(", ")
     ));
 
-    if !settings.dns_upstreams.is_empty() {
-        toml.push_str(&format!(
-            "dns_upstreams = [{}]\n",
-            settings
-                .dns_upstreams
-                .iter()
-                .map(|s| format!("\"{}\"", s))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
-    }
-
     toml.push_str("\n[endpoint]\n");
-    toml.push_str(&format!("hostname = \"{}\"\n", settings.hostname));
+    toml.push_str(&format!("hostname = {}\n", toml_string(&settings.hostname)));
     toml.push_str(&format!(
         "addresses = [{}]\n",
         settings
             .addresses
             .iter()
-            .map(|s| format!("\"{}\"", s))
+            .map(|s| toml_string(s))
             .collect::<Vec<_>>()
             .join(", ")
     ));
-    toml.push_str(&format!("username = \"{}\"\n", settings.username));
-    toml.push_str(&format!("password = \"{}\"\n", settings.password));
+    toml.push_str(&format!("username = {}\n", toml_string(&settings.username)));
+    toml.push_str(&format!("password = {}\n", toml_string(&settings.password)));
     toml.push_str(&format!(
-        "upstream_protocol = \"{}\"\n",
-        settings.upstream_protocol
+        "upstream_protocol = {}\n",
+        toml_string(&settings.upstream_protocol)
     ));
     toml.push_str(&format!("has_ipv6 = {}\n", settings.has_ipv6));
-    toml.push_str(&format!("client_random = \"{}\"\n", settings.client_random));
+    toml.push_str(&format!(
+        "client_random = {}\n",
+        toml_string(&settings.client_random)
+    ));
     toml.push_str(&format!(
         "skip_verification = {}\n",
         settings.skip_verification
     ));
     toml.push_str(&format!("anti_dpi = {}\n", settings.anti_dpi));
     if !settings.certificate.is_empty() {
-        toml.push_str(&format!("certificate = \"{}\"\n", settings.certificate));
+        toml.push_str(&format!(
+            "certificate = {}\n",
+            toml_string(&settings.certificate)
+        ));
     }
     if !settings.custom_sni.is_empty() {
-        toml.push_str(&format!("custom_sni = \"{}\"\n", settings.custom_sni));
+        toml.push_str(&format!(
+            "custom_sni = {}\n",
+            toml_string(&settings.custom_sni)
+        ));
+    }
+    if !settings.dns_upstreams.is_empty() {
+        toml.push_str(&format!(
+            "dns_upstreams = [{}]\n",
+            settings
+                .dns_upstreams
+                .iter()
+                .map(|s| toml_string(s))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
 
     toml.push_str("\n[listener.tun]\n");
-    toml.push_str(&format!("bound_if = \"{}\"\n", settings.bound_if));
+    toml.push_str(&format!("bound_if = {}\n", toml_string(&settings.bound_if)));
     toml.push_str(&format!(
         "change_system_dns = {}\n",
         settings.change_system_dns
@@ -425,7 +433,7 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
             "included_routes = [{}]\n",
             included
                 .iter()
-                .map(|s| format!("\"{}\"", s))
+                .map(|s| toml_string(s))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -436,7 +444,7 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
             settings
                 .excluded_routes
                 .iter()
-                .map(|s| format!("\"{}\"", s))
+                .map(|s| toml_string(s))
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
@@ -445,16 +453,37 @@ pub fn generate_client_toml(settings: &TunnelSettings) -> String {
 
     if !settings.socks_address.is_empty() {
         toml.push_str("\n[listener.socks]\n");
-        toml.push_str(&format!("address = \"{}\"\n", settings.socks_address));
+        toml.push_str(&format!(
+            "address = {}\n",
+            toml_string(&settings.socks_address)
+        ));
         if !settings.socks_username.is_empty() {
-            toml.push_str(&format!("username = \"{}\"\n", settings.socks_username));
+            toml.push_str(&format!(
+                "username = {}\n",
+                toml_string(&settings.socks_username)
+            ));
         }
         if !settings.socks_password.is_empty() {
-            toml.push_str(&format!("password = \"{}\"\n", settings.socks_password));
+            toml.push_str(&format!(
+                "password = {}\n",
+                toml_string(&settings.socks_password)
+            ));
         }
     }
 
     toml
+}
+
+fn toml_string(value: &str) -> String {
+    format!(
+        "\"{}\"",
+        value
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t")
+    )
 }
 
 #[cfg(test)]
@@ -465,18 +494,32 @@ mod tests {
     fn test_generate_toml() {
         let s = TunnelSettings {
             hostname: "vpn.example.com".into(),
+            custom_sni: "sni.example.com".into(),
             addresses: vec!["1.2.3.4:443".into()],
             username: "user".into(),
             password: "pass".into(),
-            custom_sni: "sni.example.com".into(),
             ..Default::default()
         };
         let toml = generate_client_toml(&s);
         assert!(toml.contains("[endpoint]"));
         assert!(toml.contains("hostname = \"vpn.example.com\""));
-        assert!(toml.contains("username = \"user\""));
         assert!(toml.contains("custom_sni = \"sni.example.com\""));
+        assert!(toml.contains("[endpoint]\n"));
+        assert!(toml.contains("dns_upstreams = [\"tls://1.1.1.1\"]"));
+        assert!(toml.contains("username = \"user\""));
         assert!(toml.contains("[listener.tun]"));
+    }
+
+    #[test]
+    fn test_escape_toml_strings() {
+        let s = TunnelSettings {
+            username: "user\"name".into(),
+            password: "pa\\ss".into(),
+            ..Default::default()
+        };
+        let toml = generate_client_toml(&s);
+        assert!(toml.contains("username = \"user\\\"name\""));
+        assert!(toml.contains("password = \"pa\\\\ss\""));
     }
 
     #[test]

@@ -12,13 +12,6 @@
 - Route and interface management via NDM (`OpkgTun0`) and Linux interfaces (`opkgtun0`/`tun0`)
 - Wrapper log ring buffer and optional file logging with rotation
 
-## Stability Notes
-
-- `disconnect` stops the tunnel process but keeps the supervisor thread alive; a later `connect` still has crash detection and auto-respawn.
-- Child `stdout`/`stderr` are drained continuously by the wrapper to prevent pipe-buffer stalls under verbose client logging.
-- If routing setup is not active yet, watchdog retries routing setup instead of silently becoming inactive.
-- Watchdog connectivity probe requires `curl` with `--interface` support to validate connectivity through `opkgtun0`.
-
 ## Architecture (High Level)
 
 ```text

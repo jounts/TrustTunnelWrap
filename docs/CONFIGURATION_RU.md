@@ -18,12 +18,12 @@ package/etc/trusttunnel/config.json
 {
   "tunnel": {
     "hostname": "",
+    "custom_sni": "",
     "addresses": [],
     "username": "",
     "password": "",
     "upstream_protocol": "http2",
     "certificate": "",
-    "custom_sni": "",
     "skip_verification": false,
     "vpn_mode": "general",
     "dns_upstreams": ["tls://1.1.1.1"],
@@ -75,15 +75,15 @@ package/etc/trusttunnel/config.json
 | Параметр | Тип | По умолчанию | Описание |
 |---|---|---|---|
 | `hostname` | string | `""` | Hostname endpoint (SNI) |
+| `custom_sni` | string | `""` | Необязательная замена TLS SNI отдельно от hostname endpoint |
 | `addresses` | string[] | `[]` | Адреса endpoint (`IP:port`) |
 | `username` | string | `""` | Логин endpoint |
 | `password` | string | `""` | Пароль endpoint |
 | `upstream_protocol` | string | `"http2"` | Протокол (`http2`/`http3`) |
 | `certificate` | string | `""` | PEM-сертификат endpoint (опционально) |
-| `custom_sni` | string | `""` | Переопределение TLS SNI отдельно от `hostname` (опционально) |
 | `skip_verification` | bool | `false` | Пропуск TLS-проверки |
 | `vpn_mode` | string | `"general"` | `general` или `selective` |
-| `dns_upstreams` | string[] | `["tls://1.1.1.1"]` | DNS через VPN |
+| `dns_upstreams` | string[] | `["tls://1.1.1.1"]` | DNS через VPN; в TOML клиента генерируется в секции `[endpoint]` |
 | `killswitch_enabled` | bool | `false` | Блокировка трафика вне VPN |
 | `killswitch_allow_ports` | number[] | `[]` | Разрешённые локальные порты при killswitch |
 | `post_quantum_group_enabled` | bool | `true` | Включение post-quantum группы |
@@ -133,12 +133,20 @@ package/etc/trusttunnel/config.json
 | `watchdog_check_url` | string | `"http://connectivitycheck.gstatic.com/generate_204"` | URL health-check |
 | `watchdog_check_timeout` | number | `5` | Таймаут проверки (сек) |
 
-Проверка связности watchdog выполняется через `opkgtun0` и требует `curl` с поддержкой `--interface`.
-
 ## Имена интерфейсов (Keenetic)
 
 - Linux: `opkgtun0` (lowercase), видно в `ip link`.
 - NDM: `OpkgTun0` (CamelCase), видно в `ndmc -c 'show interface'`.
+
+## NDMS 5: «Маршруты DNS» и переустановка пакета
+
+В веб-интерфейсе Keenetic/Netcraze (NDMS 5) **«Маршрутизация → Маршруты DNS»** создаются `object-group fqdn` и правила в `dns-proxy` вида `route object-group … OpkgTun0 …`.
+
+Скрипты пакета **не редактируют** `dns-proxy`. Но при `opkg remove trusttunnel-keenetic` выполняется снятие интерфейса NDM (`no interface OpkgTun0`). В такой ситуации прошивка может **удалить правила `dns-proxy`, ссылающиеся на несуществующий `OpkgTun0`**, при этом **сами списки доменов (`object-group`) часто остаются**.
+
+**Восстановить маршруты можно** — после установки новой версии и запуска сервиса интерфейс `OpkgTun0` снова появится, но правила в `dns-proxy` нужно **заново привязать** (через веб-интерфейс или CLI), либо **восстановить фрагмент конфига** из заранее сохранённого `show running-config` / резервной копии роутера.
+
+Практика: перед обновлением пакета сохраните копию `dns-proxy` с маршрутами на `OpkgTun0` (или полный `running-config`), чтобы после обновления быстро вернуть те же строки.
 
 ## Связанные документы
 

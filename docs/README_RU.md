@@ -9,7 +9,6 @@
 - Конфигурация: [`CONFIGURATION_RU.md`](CONFIGURATION_RU.md)
 - HTTP API: [`API_RU.md`](API_RU.md)
 - Сборка, упаковка и разработка: [`BUILDING_RU.md`](BUILDING_RU.md)
-- Журнал изменений: [`../CHANGELOG.md`](../CHANGELOG.md)
 
 ## English Versions
 
