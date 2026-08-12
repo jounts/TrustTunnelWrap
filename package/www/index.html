@@ -30,6 +30,9 @@ button:hover{background:var(--ph)}button:disabled{background:var(--muted);cursor
 .between{justify-content:space-between}
 .err{color:var(--err);margin:.4rem 0;font-size:.9rem}
 .ok{color:var(--ok);margin:.4rem 0;font-size:.9rem}
+.mode-tabs{display:flex;gap:.5rem;margin:.7rem 0 1rem}
+.mode-tabs button{background:transparent;color:var(--p);border:1px solid var(--p);margin:0}
+.mode-tabs button.active{background:var(--p);color:#fff}
 footer{text-align:center;padding:1rem;color:var(--muted);font-size:.82rem}
 </style>
 </head>
@@ -55,8 +58,13 @@ footer{text-align:center;padding:1rem;color:var(--muted);font-size:.82rem}
 </div>
 
 <div class="c">
-<h2>Настройка туннеля</h2>
-<div class="fg"><label for="hostname">Hostname (SNI)</label><input id="hostname" placeholder="vpn.example.com"></div>
+ <h2>Настройка туннеля</h2>
+ <div class="mode-tabs" role="tablist" aria-label="Вариант настройки">
+ <button id="manual-tab" class="active" role="tab" aria-selected="true" onclick="selectMode('manual')">Ручной</button>
+ <button id="deeplink-tab" role="tab" aria-selected="false" onclick="selectMode('deeplink')">DeepLink</button>
+ </div>
+ <div id="manual-mode" role="tabpanel">
+ <div class="fg"><label for="hostname">Hostname (SNI)</label><input id="hostname" placeholder="vpn.example.com"></div>
 <div class="fg"><label for="addresses">Адреса (через запятую)</label><input id="addresses" placeholder="1.2.3.4:443, 5.6.7.8:443"></div>
 <div class="fg"><label for="username">Имя пользователя</label><input id="username" placeholder="user"></div>
 <div class="fg"><label for="tt-password">Пароль endpoint</label><input id="tt-password" type="password"></div>
@@ -92,9 +100,16 @@ footer{text-align:center;padding:1rem;color:var(--muted);font-size:.82rem}
 <div class="flex">
 <button onclick="saveConfig()">Сохранить</button>
 <button id="conn-btn" onclick="toggleConn()">Подключить</button>
-<button class="dng" onclick="doRestart()">Переподключить</button>
-</div>
-</div>
+ <button class="dng" onclick="doRestart()">Переподключить</button>
+ </div>
+ </div>
+ <div id="deeplink-mode" class="hide" role="tabpanel">
+ <div class="fg"><label for="deeplink">TrustTunnel DeepLink</label>
+ <textarea id="deeplink" rows="4" spellcheck="false" placeholder="tt://?..."></textarea></div>
+ <div id="deeplink-msg"></div>
+ <button onclick="importDeepLink()">Импортировать в ручную форму</button>
+ </div>
+ </div>
 
 <div class="c">
 <div class="flex between"><h2>Логи</h2><button onclick="loadLogs()" style="padding:.2rem .6rem;font-size:.85rem">Обновить</button></div>
@@ -135,6 +150,16 @@ function doLogout(){token=null;localStorage.removeItem('tt_token');clearInterval
 
 function showMain(){document.getElementById('login-card').classList.add('hide');document.getElementById('main').classList.remove('hide')}
 
+function selectMode(mode){
+  const manual=mode==='manual';
+  document.getElementById('manual-mode').classList.toggle('hide',!manual);
+  document.getElementById('deeplink-mode').classList.toggle('hide',manual);
+  document.getElementById('manual-tab').classList.toggle('active',manual);
+  document.getElementById('deeplink-tab').classList.toggle('active',!manual);
+  document.getElementById('manual-tab').setAttribute('aria-selected',manual?'true':'false');
+  document.getElementById('deeplink-tab').setAttribute('aria-selected',manual?'false':'true');
+}
+
 function poll(){clearInterval(sp);clearInterval(lp);updateStatus();loadLogs();sp=setInterval(updateStatus,5000);lp=setInterval(loadLogs,15000)}
 
 async function updateStatus(){
@@ -150,6 +175,91 @@ async function updateStatus(){
 }
 
 function fmtUp(s){if(!s||s<60)return s+'s';if(s<3600)return Math.floor(s/60)+'m '+s%60+'s';return Math.floor(s/3600)+'h '+Math.floor(s%3600/60)+'m'}
+
+function decodeDeepLink(uri){
+  const value=uri.trim();
+  if(!/^tt:\/\//i.test(value))throw new Error('Ссылка должна начинаться с tt://');
+  let payload=value.slice(value.indexOf('//')+2);
+  if(payload[0]==='?')payload=payload.slice(1);
+  if(!payload)throw new Error('Пустая полезная нагрузка deeplink');
+  payload=payload.replace(/-/g,'+').replace(/_/g,'/');
+  while(payload.length%4)payload+='=';
+  let bytes;
+  try{bytes=Uint8Array.from(atob(payload),c=>c.charCodeAt(0))}
+  catch(e){throw new Error('Некорректная Base64URL-полезная нагрузка')}
+  let pos=0,fields=new Map(),addresses=[];
+  const readVarInt=()=>{
+    if(pos>=bytes.length)throw new Error('Обрезанная deeplink');
+    const first=bytes[pos++],size=1<<(first>>6);
+    if(pos+size-1>bytes.length)throw new Error('Обрезанный varint');
+    let result=first&0x3f;
+    for(let i=1;i<size;i++)result=result*256+bytes[pos++];
+    return result;
+  };
+  const readBytes=length=>{
+    if(pos+length>bytes.length)throw new Error('Обрезанное TLV-поле');
+    const result=bytes.slice(pos,pos+length);pos+=length;return result;
+  };
+  const text=data=>new TextDecoder().decode(data);
+  while(pos<bytes.length){
+    const tag=readVarInt(),length=readVarInt(),data=readBytes(length);
+    if(tag===2)addresses.push(text(data));else fields.set(tag,data);
+  }
+  if(fields.has(0)){
+    const data=fields.get(0);let i=0,first=data[i++],size=1<<(first>>6),version=first&0x3f;
+    if(size>data.length)throw new Error('Некорректная версия deeplink');
+    for(;i<size;i++)version=version*256+data[i];
+    if(version>1)throw new Error('Неподдерживаемая версия deeplink: '+version);
+  }
+  if(!fields.has(1)||!addresses.length||!fields.has(5)||!fields.has(6))throw new Error('В deeplink отсутствуют обязательные поля');
+  const getText=tag=>fields.has(tag)?text(fields.get(tag)):'';
+  const getBool=(tag,defaultValue)=>fields.has(tag)?fields.get(tag)[0]!==0:defaultValue;
+  const getProtocol=()=>{
+    if(!fields.has(9))return 'http2';
+    const data=fields.get(9);return data.length&&data[0]===2?'http3':'http2';
+  };
+  const getStrings=tag=>{
+    if(!fields.has(tag))return [];
+    const data=fields.get(tag),result=[];let i=0;
+    while(i<data.length){
+      const first=data[i++],size=1<<(first>>6);if(i+size-1>data.length)throw new Error('Некорректный список строк');
+      let length=first&0x3f;for(let j=1;j<size;j++)length=length*256+data[i++];
+      if(i+length>data.length)throw new Error('Некорректный список строк');
+      result.push(text(data.slice(i,i+length)));i+=length;
+    }
+    return result;
+  };
+  let certificate='';
+  if(fields.has(8)){
+    const data=fields.get(8),parts=[];
+    for(let i=0;i<data.length;i+=0x6000)parts.push(String.fromCharCode(...data.slice(i,i+0x6000)));
+    const encoded=btoa(parts.join(''));
+    certificate='-----BEGIN CERTIFICATE-----\n'+encoded.replace(/(.{64})/g,'$1\n')+'\n-----END CERTIFICATE-----';
+  }
+  return {hostname:getText(1),addresses,username:getText(5),password:getText(6),has_ipv6:getBool(4,true),
+    skip_verification:getBool(7,false),certificate,upstream_protocol:getProtocol(),anti_dpi:getBool(10,false),
+    client_random:getText(11),dns_upstreams:getStrings(13)};
+}
+
+function applyDeepLinkConfig(c){
+  const set=(id,value)=>{if(value!==undefined&&value!==null&&value!=='')document.getElementById(id).value=value};
+  set('hostname',c.hostname);set('addresses',c.addresses.join(', '));set('username',c.username);set('tt-password',c.password);
+  document.getElementById('has-ipv6').checked=c.has_ipv6;
+  document.getElementById('skip-verify').checked=c.skip_verification;
+  document.getElementById('protocol').value=c.upstream_protocol;
+  document.getElementById('anti-dpi').checked=c.anti_dpi;
+  if(c.client_random)set('client-random',c.client_random);
+  if(c.certificate)set('certificate',c.certificate);
+  if(c.dns_upstreams.length)set('dns',c.dns_upstreams.join(', '));
+}
+
+function importDeepLink(){
+  const msg=document.getElementById('deeplink-msg');msg.textContent='';msg.className='';
+  try{
+    const cfg=decodeDeepLink(document.getElementById('deeplink').value);applyDeepLinkConfig(cfg);selectMode('manual');
+    const manualMsg=document.getElementById('cfg-msg');manualMsg.textContent='DeepLink импортирован. Проверьте поля и сохраните конфигурацию.';manualMsg.className='ok';
+  }catch(e){msg.textContent='Ошибка: '+e.message;msg.className='err'}
+}
 
 async function loadCfg(){
   try{

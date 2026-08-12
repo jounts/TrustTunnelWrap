@@ -165,6 +165,15 @@ Returns recent log lines from combined runtime sources.
 
 Returns embedded Web UI HTML.
 
+The “Tunnel configuration” section provides two modes:
+
+- **Manual** — the complete tunnel configuration form;
+- **DeepLink** — paste a TrustTunnel `tt://?...` link and import its parameters into the manual form.
+
+Import does not save the configuration automatically. Review the fields and click
+“Save” to persist it. A DeepLink contains the endpoint username and password in
+encoded but unencrypted form, so it must be treated as sensitive data.
+
 ---
 
 ## Error format

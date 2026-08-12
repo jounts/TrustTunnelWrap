@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Add Manual and DeepLink modes to the WebUI tunnel configuration section.
+- Import TrustTunnel `tt://?...` links into the manual configuration form without automatic saving.
+
 ### Fixed
 
 - Drain TrustTunnelClient output continuously so full stdout/stderr pipes cannot stall the client.
