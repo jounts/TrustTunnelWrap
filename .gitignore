@@ -11,3 +11,4 @@ ipk_root/
 *.log
 .DS_Store
 Thumbs.db
+AGENTS.md
