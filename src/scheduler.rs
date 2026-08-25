@@ -10,6 +10,19 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const POLL_INTERVAL_SECS: u64 = 60;
+const BACKOFF_BASE_SECS: u64 = 60;
+const BACKOFF_MAX_SECS: u64 = 2 * 60 * 60;
+
+/// Exponential cooldown after consecutive failed updates:
+/// 1min, 2min, 4min, ... capped at 2h. Prevents hammering a dead mirror
+/// every poll tick. Manual/cron requests are never delayed.
+fn backoff_secs(consecutive_failures: u32) -> u64 {
+    let shift = consecutive_failures.saturating_sub(1);
+    BACKOFF_BASE_SECS
+        .checked_shl(shift)
+        .unwrap_or(BACKOFF_MAX_SECS)
+        .min(BACKOFF_MAX_SECS)
+}
 
 pub fn spawn(config: Arc<Mutex<WrapperConfig>>, split: Arc<SplitTunnelManager>) {
     let spawn_result = std::thread::Builder::new()
@@ -37,6 +50,9 @@ fn scheduler_loop(config: Arc<Mutex<WrapperConfig>>, split: Arc<SplitTunnelManag
     );
     std::thread::sleep(Duration::from_secs(jitter_secs.min(300)));
 
+    let mut consecutive_failures: u32 = 0;
+    let mut next_auto_attempt: Option<std::time::Instant> = None;
+
     loop {
         let snapshot = config.lock().unwrap().clone();
         let geoip = &snapshot.geoip;
@@ -45,7 +61,7 @@ fn scheduler_loop(config: Arc<Mutex<WrapperConfig>>, split: Arc<SplitTunnelManag
         let mut should_update = false;
         let mut reason = String::new();
 
-        // Cron-style request file.
+        // Cron-style request file. Manual requests bypass the failure backoff.
         let request_file = format!("{}/.update-request", geoip.db_path.trim_end_matches('/'));
         if std::path::Path::new(&request_file).exists() {
             let _ = std::fs::remove_file(&request_file);
@@ -54,20 +70,29 @@ fn scheduler_loop(config: Arc<Mutex<WrapperConfig>>, split: Arc<SplitTunnelManag
         }
 
         if !should_update && geoip.enabled && geoip.auto_update.enabled && st.enabled {
-            match staleness_hours(geoip) {
-                Some(age) => {
-                    if age as u64 >= geoip.auto_update.interval_hours {
-                        should_update = true;
-                        reason = format!("database is {:.0}h old", age);
-                    } else if age as u64 >= geoip.auto_update.max_age_hours_hard {
-                        should_update = true;
-                        reason = format!("database hard-stale at {:.0}h", age);
-                    }
+            if let Some(wait_until) = next_auto_attempt {
+                if std::time::Instant::now() < wait_until {
+                    log::debug!("[geoip] auto-update postponed by failure backoff");
+                } else {
+                    next_auto_attempt = None;
                 }
-                None => {
-                    if geoip.auto_update.on_startup_if_stale {
-                        should_update = true;
-                        reason = "no database present".into();
+            }
+            if next_auto_attempt.is_none() {
+                match staleness_hours(geoip) {
+                    Some(age) => {
+                        if age as u64 >= geoip.auto_update.interval_hours {
+                            should_update = true;
+                            reason = format!("database is {:.0}h old", age);
+                        } else if age as u64 >= geoip.auto_update.max_age_hours_hard {
+                            should_update = true;
+                            reason = format!("database hard-stale at {:.0}h", age);
+                        }
+                    }
+                    None => {
+                        if geoip.auto_update.on_startup_if_stale {
+                            should_update = true;
+                            reason = "no database present".into();
+                        }
                     }
                 }
             }
@@ -77,6 +102,8 @@ fn scheduler_loop(config: Arc<Mutex<WrapperConfig>>, split: Arc<SplitTunnelManag
             log::info!("[geoip] update triggered ({})", reason);
             match crate::geoip::rebuild_for_split_tunnel(geoip, st) {
                 Ok(_) => {
+                    consecutive_failures = 0;
+                    next_auto_attempt = None;
                     split.reload_geoip();
                     logs_push("[geoip] database updated");
                     // Re-apply the active policy with fresh country data.
@@ -87,8 +114,19 @@ fn scheduler_loop(config: Arc<Mutex<WrapperConfig>>, split: Arc<SplitTunnelManag
                     }
                 }
                 Err(e) => {
-                    log::warn!("[geoip] scheduled update failed: {}", e);
-                    logs_push(&format!("[geoip] update failed: {}", e));
+                    consecutive_failures += 1;
+                    let wait = backoff_secs(consecutive_failures);
+                    next_auto_attempt = Some(std::time::Instant::now() + Duration::from_secs(wait));
+                    log::warn!(
+                        "[geoip] scheduled update failed ({} in a row): {}; retrying in {}s",
+                        consecutive_failures,
+                        e,
+                        wait
+                    );
+                    logs_push(&format!(
+                        "[geoip] update failed: {} (retry in {}s)",
+                        e, wait
+                    ));
                 }
             }
         }
@@ -122,4 +160,20 @@ fn pseudo_random_jitter(jitter_minutes: u64) -> u64 {
 fn logs_push(msg: &str) {
     log::info!("{}", msg);
     crate::logs::global_buffer().push(msg.to_string());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn backoff_grows_exponentially_and_caps() {
+        assert_eq!(backoff_secs(1), 60);
+        assert_eq!(backoff_secs(2), 120);
+        assert_eq!(backoff_secs(3), 240);
+        assert_eq!(backoff_secs(4), 480);
+        // Cap at 2 hours regardless of the failure count.
+        assert_eq!(backoff_secs(8), BACKOFF_MAX_SECS);
+        assert_eq!(backoff_secs(100), BACKOFF_MAX_SECS);
+    }
 }
