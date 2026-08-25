@@ -47,5 +47,54 @@
     "watchdog_failures": 3,
     "watchdog_check_url": "http://connectivitycheck.gstatic.com/generate_204",
     "watchdog_check_timeout": 5
+  },
+  "geoip": {
+    "enabled": false,
+    "mode": "local",
+    "db_providers": [
+      {
+        "id": "geolite2-p3terx",
+        "url": "https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb",
+        "format": "mmdb",
+        "priority": 1,
+        "enabled": true
+      },
+      {
+        "id": "geolite2-wpstatistics",
+        "url": "https://cdn.jsdelivr.net/npm/geolite2-country/GeoLite2-Country.mmdb.gz",
+        "format": "mmdb",
+        "priority": 2,
+        "enabled": false
+      },
+      {
+        "id": "ip2location-lite-db1",
+        "url": "https://download.ip2location.com/lite/IP2LOCATION-LITE-DB1.CSV.ZIP",
+        "format": "ip2location-csv",
+        "priority": 3,
+        "enabled": false
+      }
+    ],
+    "api_providers": [
+      { "id": "ip2c", "kind": "ip2c", "url": "https://ip2c.org", "api_key": "", "priority": 1, "enabled": false, "rate_limit_per_min": 30 }
+    ],
+    "trim_to_selected_countries": true,
+    "db_path": "/opt/etc/trusttunnel/geoip/",
+    "cache_ttl_hours": 24,
+    "auto_update": {
+      "enabled": true,
+      "interval_hours": 168,
+      "jitter_minutes": 30,
+      "on_startup_if_stale": true,
+      "max_age_hours_hard": 720
+    }
+  },
+  "split_tunnel": {
+    "enabled": false,
+    "policy": "tunnel_all_except",
+    "countries_bypass": [],
+    "countries_tunnel": [],
+    "manual_bypass": [],
+    "manual_tunnel": [],
+    "detection_mode": "local"
   }
 }

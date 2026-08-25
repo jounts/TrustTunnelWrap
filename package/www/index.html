@@ -115,6 +115,45 @@ footer{text-align:center;padding:1rem;color:var(--muted);font-size:.82rem}
 <div class="flex between"><h2>Логи</h2><button onclick="loadLogs()" style="padding:.2rem .6rem;font-size:.85rem">Обновить</button></div>
 <div class="log" id="logs"><em>Загрузка...</em></div>
 </div>
+
+<div class="c">
+<h2>Split Tunneling (GeoIP)</h2>
+<div class="fg"><label><input type="checkbox" id="st-enabled" onchange="stFormChanged()"> Включить раздельное туннелирование</label></div>
+<div class="fg"><label for="st-policy">Политика</label>
+<select id="st-policy" onchange="stFormChanged()">
+<option value="tunnel_all_except">Весь трафик через VPN, кроме выбранных стран</option>
+<option value="tunnel_only_listed">Только выбранное через VPN</option>
+</select></div>
+<div class="fg"><label for="st-countries-bypass">Страны напрямую (bypass, ISO-коды через запятую)</label>
+<input id="st-countries-bypass" placeholder="RU, KZ, BY"></div>
+<div class="fg"><label for="st-countries-tunnel">Страны через VPN (ISO-коды через запятую)</label>
+<input id="st-countries-tunnel" placeholder="DE, NL"></div>
+<div class="fg"><label for="st-manual-bypass">Всегда напрямую (домены/IP/CIDR, через запятую)</label>
+<textarea id="st-manual-bypass" rows="2" placeholder="example.local, 192.168.50.0/24"></textarea></div>
+<div class="fg"><label for="st-manual-tunnel">Всегда через VPN (домены/IP/CIDR, через запятую)</label>
+<textarea id="st-manual-tunnel" rows="2" placeholder="some-blocked-service.com"></textarea></div>
+<div class="fg"><label for="st-detection">Определение страны</label>
+<select id="st-detection">
+<option value="local">Локальная база</option>
+<option value="api">API</option>
+<option value="hybrid">Гибрид (база + API fallback)</option>
+</select></div>
+<div id="st-msg"></div>
+<div class="flex"><button onclick="saveSplitPolicy()">Применить</button></div>
+
+<h2 style="margin-top:1rem">База GeoIP</h2>
+<div class="fg"><label>Провайдер базы (выбор сразу загружает базу)</label>
+<div id="geoip-provider-list" style="font-size:.92rem"></div></div>
+<div id="geoip-status" style="font-size:.9rem;color:var(--muted)">-</div>
+<div class="flex"><button onclick="updateGeoip(this)">Обновить базу</button></div>
+
+<h2 style="margin-top:1rem">Диагностика</h2>
+<div class="fg flex">
+<input id="st-test-target" placeholder="IP или домен, напр. ya.ru или 8.8.8.8" style="flex:1;min-width:220px">
+<button onclick="testTarget()" style="margin-left:.5rem">Проверить</button>
+</div>
+<div id="st-test-result" style="font-size:.9rem"></div>
+</div>
 </div>
 
 <footer>trusttunnel-keenetic v__TRUSTTUNNEL_VERSION__ | <a href="#" onclick="doLogout();return false">Выйти</a></footer>
@@ -123,7 +162,7 @@ footer{text-align:center;padding:1rem;color:var(--muted);font-size:.82rem}
 const API='/api';
 let token=localStorage.getItem('tt_token'),sp,lp;
 
-document.addEventListener('DOMContentLoaded',()=>{if(token){showMain();poll();loadCfg()}});
+document.addEventListener('DOMContentLoaded',()=>{if(token){showMain();poll();loadCfg();loadSplitPolicy();refreshGeoipStatus()}});
 
 async function api(path,method='GET',body){
   const h={'Authorization':token};
@@ -139,7 +178,7 @@ async function doLogin(){
   b.disabled=true;e.classList.add('hide');
   try{
     const d=await fetch(API+'/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({login:l,password:p})}).then(r=>r.json());
-    if(d.token){token=d.token;localStorage.setItem('tt_token',token);showMain();poll();loadCfg()}
+    if(d.token){token=d.token;localStorage.setItem('tt_token',token);showMain();poll();loadCfg();loadSplitPolicy();refreshGeoipStatus()}
     else throw new Error(d.error||'Ошибка');
   }catch(err){e.textContent=err.message;e.classList.remove('hide')}
   finally{b.disabled=false}
@@ -350,6 +389,115 @@ async function loadLogs(){
 }
 
 function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML}
+
+async function loadSplitPolicy(){
+  try{
+    const d=await api('/splittunnel/policy');
+    document.getElementById('st-enabled').checked=!!d.enabled;
+    document.getElementById('st-policy').value=d.policy||'tunnel_all_except';
+    document.getElementById('st-countries-bypass').value=(d.countries_bypass||[]).join(', ');
+    document.getElementById('st-countries-tunnel').value=(d.countries_tunnel||[]).join(', ');
+    document.getElementById('st-manual-bypass').value=(d.manual_bypass||[]).join(', ');
+    document.getElementById('st-manual-tunnel').value=(d.manual_tunnel||[]).join(', ');
+    document.getElementById('st-detection').value=d.detection_mode||'local';
+    renderGeoipStatus(d.status);
+  }catch(e){}
+}
+
+function stFormChanged(){}
+
+async function saveSplitPolicy(){
+  const m=document.getElementById('st-msg');m.textContent='';m.className='';
+  const body={
+    enabled:document.getElementById('st-enabled').checked,
+    policy:document.getElementById('st-policy').value,
+    countries_bypass:document.getElementById('st-countries-bypass').value.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean),
+    countries_tunnel:document.getElementById('st-countries-tunnel').value.split(',').map(s=>s.trim().toUpperCase()).filter(Boolean),
+    manual_bypass:document.getElementById('st-manual-bypass').value.split(',').map(s=>s.trim()).filter(Boolean),
+    manual_tunnel:document.getElementById('st-manual-tunnel').value.split(',').map(s=>s.trim()).filter(Boolean),
+    detection_mode:document.getElementById('st-detection').value
+  };
+  if(body.enabled){
+    if(body.policy==='tunnel_all_except'&&!body.countries_bypass.length){m.textContent='Для этой политики укажите страны напрямую (bypass)';m.className='err';return}
+    if(body.policy==='tunnel_only_listed'&&!body.countries_tunnel.length){m.textContent='Для этой политики укажите страны через VPN';m.className='err';return}
+  }
+  try{
+    const r=await api('/splittunnel/policy','POST',body);
+    if(r.apply_error){m.textContent='Сохранено, но применение не удалось: '+r.apply_error;m.className='err'}
+    else{m.textContent=r.status==='applied'?'Политика применена':'Сохранено (применится при подключении)';m.className='ok'}
+    loadSplitPolicy();
+  }catch(e){m.textContent='Ошибка: '+(e.message||e);m.className='err'}
+}
+
+function renderGeoipStatus(st){
+  const el=document.getElementById('geoip-status');
+  if(!st){el.textContent='-';return}
+  const meta=st.geoip&&st.geoip.meta;
+  let txt='Статус: '+(st.geoip&&st.geoip.available?'база загружена':'база отсутствует');
+  if(meta){
+    const built=meta.built_unix?new Date(meta.built_unix*1000).toLocaleString():'-';
+    txt+=` | провайдер: ${meta.provider_id||'-'} | от: ${built} | записей: ${meta.records_v4||0} v4 + ${meta.records_v6||0} v6 | ${(meta.bytes_on_disk/1024).toFixed(0)} КБ`;
+    if(meta.trimmed_countries&&meta.trimmed_countries.length)txt+=' | страны: '+meta.trimmed_countries.join(', ');
+  }
+  if(st.last_error)txt+=' | ошибка: '+st.last_error;
+  el.textContent=txt;
+}
+
+async function refreshGeoipStatus(){
+  try{
+    const st=await api('/geoip/status');
+    renderGeoipStatus(st);
+    const pv=await api('/geoip/providers');
+    renderProviderList(pv.db_providers||[]);
+  }catch(e){}
+}
+
+function renderProviderList(providers){
+  const el=document.getElementById('geoip-provider-list');
+  if(!providers.length){el.innerHTML='<em style="color:var(--muted)">Провайдеры не настроены в config.json</em>';return}
+  el.innerHTML=providers.map(p=>{
+    const active=p.enabled?'checked':'';
+    return `<label style="font-weight:400;margin:.15rem 0"><input type="radio" name="geoip-provider" value="${esc(p.id)}" ${active} onchange="selectGeoipProvider('${esc(p.id)}')"> ${esc(p.id)} <span style="color:var(--muted);font-size:.8rem">(${esc(p.format)})</span></label>`;
+  }).join('');
+}
+
+async function selectGeoipProvider(id){
+  const m=document.getElementById('st-msg');m.textContent='';m.className='';
+  const el=document.getElementById('geoip-status');
+  el.textContent='Загрузка базы от '+id+'...';
+  try{
+    const r=await api('/geoip/provider','POST',{id});
+    if(r.error){m.textContent='Ошибка: '+r.error;m.className='err'}
+    else{m.textContent='Провайдер '+id+' выбран, база обновлена';m.className='ok'}
+  }catch(e){m.textContent='Ошибка: '+(e.message||e);m.className='err'}
+  refreshGeoipStatus();
+}
+
+async function updateGeoip(btn){
+  const m=document.getElementById('st-msg');
+  btn.disabled=true;btn.textContent='Обновление...';
+  try{const r=await api('/geoip/update','POST',{});
+    if(r.error){m.textContent='Ошибка обновления: '+r.error;m.className='err'}
+    else{m.textContent='База GeoIP обновлена';m.className='ok'}
+  }catch(e){m.textContent='Ошибка: '+e.message;m.className='err'}
+  finally{btn.disabled=false;btn.textContent='Обновить базу';refreshGeoipStatus()}
+}
+
+async function testTarget(){
+  const target=document.getElementById('st-test-target').value.trim();
+  const el=document.getElementById('st-test-result');
+  if(!target){el.innerHTML='<span class="err">Введите IP или домен</span>';return}
+  el.textContent='Проверка...';
+  try{
+    const r=await api('/splittunnel/test','POST',{target});
+    const rows=(r.results||[]).map(x=>{
+      const route=x.route==='tunnel'?'<b style="color:var(--p)">через VPN</b>':'<b style="color:var(--ok)">напрямую</b>';
+      return `<tr><td>${esc(x.ip)}</td><td>${x.country?esc(x.country):'?'}</td><td>${esc(x.matched_rule)}</td><td>${route}</td></tr>`;
+    }).join('');
+    el.innerHTML=`<table style="border-collapse:collapse;margin-top:.4rem"><tr style="text-align:left;color:var(--muted)"><th>IP</th><th>Страна</th><th>Правило</th><th>Маршрут</th></tr>${rows}</table>`;
+  }catch(e){el.innerHTML='<span class="err">'+esc(e.message||String(e))+'</span>'}
+}
+
 </script>
 </body>
 </html>
