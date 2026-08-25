@@ -137,6 +137,93 @@ package/etc/trusttunnel/config.json
 | `watchdog_check_url` | string | `"http://connectivitycheck.gstatic.com/generate_204"` | URL health-check |
 | `watchdog_check_timeout` | number | `5` | Таймаут проверки (сек) |
 
+## `geoip`
+
+Подсистема GeoIP для сплит-туннелирования. По умолчанию выключена. При
+включении wrapper скачивает страновые базы, конвертирует их в компактный
+бинарный формат (`v4.bin` / `v6.bin` в `db_path`) и отвечает на запросы
+IP→страна.
+
+| Параметр | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `enabled` | bool | `false` | Включить подсистему GeoIP |
+| `mode` | string | `"local"` | Режим поиска: `local` / `api` / `hybrid` |
+| `db_providers` | object[] | `[]` | Источники скачиваемых баз (см. ниже) |
+| `api_providers` | object[] | `[]` | Онлайн-API определения страны (см. ниже) |
+| `trim_to_selected_countries` | bool | `true` | Хранить только диапазоны стран из `split_tunnel`; радикально уменьшает размер базы |
+| `db_path` | string | `"/opt/etc/trusttunnel/geoip/"` | Каталог собранных баз. Размещение на USB снижает износ внутренней флеш-памяти |
+| `cache_ttl_hours` | number | `24` | TTL записей кеша API-лукапов |
+| `auto_update.enabled` | bool | `false` | Фоновое автообновление |
+| `auto_update.interval_hours` | number | `168` | Интервал обновления (часы) |
+| `auto_update.jitter_minutes` | number | `30` | Случайная начальная задержка (разгрузка зеркал) |
+| `auto_update.on_startup_if_stale` | bool | `true` | Собрать базу при старте, если её нет |
+| `auto_update.max_age_hours_hard` | number | `720` | Порог «совсем протухшей» базы |
+
+**Поля db_providers[]:** `id` (уникальный), `url` (http/https), `format`
+(один из `mmdb`, `geolite2-csv`, `ip2location-csv`, `zone`), `priority`
+(меньше — выше приоритет при перекрытии данных), `enabled`. Скачивание
+прозрачно поддерживает gzip/zip-контейнеры и условные запросы по
+ETag/Last-Modified.
+
+В пакет предустановлены три провайдера, не требующие ключей; активен ровно
+один (одиночный выбор):
+
+| id | Источник | URL | Формат |
+|---|---|---|---|
+| `geolite2-p3terx` | P3TERX/GeoLite.mmdb | `https://github.com/P3TERX/GeoLite.mmdb/raw/download/GeoLite2-Country.mmdb` | mmdb |
+| `geolite2-wpstatistics` | wp-statistics через jsDelivr | `https://cdn.jsdelivr.net/npm/geolite2-country/GeoLite2-Country.mmdb.gz` | mmdb (gzip) |
+| `ip2location-lite-db1` | lite.ip2location.com | `https://download.ip2location.com/lite/IP2LOCATION-LITE-DB1.CSV.ZIP` | ip2location-csv |
+
+Все три скачиваются напрямую без регистрации и API-ключей. Выбор провайдера
+в WebUI (`POST /api/geoip/provider`) немедленно скачивает и собирает его
+базу; предыдущая база сохраняется до успешной валидации новой. Включение
+сплит-туннелинга при отсутствии базы также запускает автоматическую первую
+загрузку.
+
+Примечание: wp-statistics ранее публиковал per-country `.zone` файлы; сейчас
+это единый сжатый mmdb (см. выше). Формат `zone` остаётся поддерживаемым для
+других источников — укажите двухбуквенный код страны в id провайдера
+(например, `"ru-zone"`).
+
+**Поля api_providers[]:** `id`, `kind` (`ip2c`, `ipapi` или `generic-json`
+с плейсхолдером `{ip}`), `url`, необязательный `api_key`, `priority`,
+`rate_limit_per_min`. Лукапы через API выполняются только на границе новых
+соединений / диагностических запросов — никогда на каждый пакет — и
+кешируются на `cache_ttl_hours`. Провайдеры, требующие учётных данных
+(обязательный непустой `api_key`), не опрашиваются автоматически сверх
+обработки лимитов/ошибок — цепочка просто переходит к следующему провайдеру.
+
+## `split_tunnel`
+
+Политико-ориентированный сплит-туннелинг на уровне ОС. Клиент остаётся в
+режиме `general` (или автоматически переводится в пустой `selective`);
+маршрутизация выполняется через `ipset` + iptables-метки + policy routing,
+поэтому NDM никогда не видит тысячи статических маршрутов. Требует
+`geoip.enabled`.
+
+| Параметр | Тип | По умолчанию | Описание |
+|---|---|---|---|
+| `enabled` | bool | `false` | Включить сплит-туннелинг |
+| `policy` | string | `"tunnel_all_except"` | `tunnel_all_except`: весь трафик через VPN, кроме перечисленных стран; `tunnel_only_listed`: только перечисленный трафик идёт в туннель |
+| `countries_bypass` | string[] | `[]` | ISO 3166-1 alpha-2 коды стран напрямую (`tunnel_all_except`) |
+| `countries_tunnel` | string[] | `[]` | ISO коды стран через VPN (`tunnel_only_listed`) |
+| `manual_bypass` | string[] | `[]` | Домен/IP/CIDR всегда напрямую (наивысший приоритет) |
+| `manual_tunnel` | string[] | `[]` | Домен/IP/CIDR всегда через VPN (второй приоритет) |
+| `detection_mode` | string | `"local"` | Источник определения страны: `local` / `api` / `hybrid` |
+
+Приоритет правил (первое совпадение побеждает): manual bypass → manual
+tunnel → страновой список → направление по умолчанию базовой политики.
+Домены в ручных правилах резолвятся в IP в момент применения политики.
+
+Требования к Entware: бинарник `ipset` + модули ядра (`ip_set`,
+`ip_set_hash_net`, `xt_set`), таблица mangle в `iptables`. Wrapper проверяет
+их перед применением политики и сообщает об отсутствии в WebUI. Осторожно с
+`killswitch_enabled`: killswitch блокирует весь трафик вне tun-устройства,
+включая «прямые» потоки сплит-туннелинга.
+
+Cron-задача может создавать файл `touch /opt/etc/trusttunnel/geoip/.update-request`
+для внепланового обновления базы.
+
 ## Имена интерфейсов (Keenetic)
 
 - Linux: `opkgtun0` (lowercase), видно в `ip link`.

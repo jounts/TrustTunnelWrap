@@ -55,6 +55,12 @@ DeepLink import only fills the manual form; review the values and click **Save**
 to persist the configuration. Links contain endpoint credentials in encoded but
 unencrypted form and must be treated as sensitive data.
 
+The optional **Split Tunneling** tab routes traffic by country (GeoIP) or by
+manual domain/IP/CIDR rules either directly or through the VPN. The GeoIP
+database is downloaded automatically: three keyless providers are preconfigured
+and selecting one fetches its database immediately. See `geoip` and
+`split_tunnel` in [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md).
+
 The Web UI intentionally uses plain HTTP and binds to `0.0.0.0` by default. Do not
 expose port 8080 outside a trusted LAN: session tokens can be intercepted. Restrict
 access with firewall rules when needed.

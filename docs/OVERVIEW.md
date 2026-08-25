@@ -11,6 +11,7 @@
 - In-memory session handling (token TTL: 1 hour, extended on activity)
 - Process supervision with reconnect logic and watchdog checks
 - Route and interface management via NDM (`OpkgTun0`) and Linux interfaces (`opkgtun0`/`tun0`)
+- Optional GeoIP-driven split tunneling (country/manual bypass or tunnel policies via ipset + policy routing)
 - Wrapper log ring buffer and optional file logging with rotation
 
 ## Architecture (High Level)
@@ -24,14 +25,20 @@ trusttunnel-keenetic (Rust wrapper)
   |    +- /api/config
   |    +- /api/control
   |    +- /api/logs
+  |    +- /api/geoip/*
+  |    +- /api/splittunnel/*
   |    \- /
   |
-  \- Tunnel Manager
-       +- Generates TOML for trusttunnel_client
-       +- Starts/stops child process trusttunnel_client
-       +- Monitors process and reconnects on failure
-       +- Runs routing/watchdog checks
-       \- Handles graceful shutdown
+  +- Tunnel Manager
+  |    +- Generates TOML for trusttunnel_client
+  |    +- Starts/stops child process trusttunnel_client
+  |    +- Monitors process and reconnects on failure
+  |    +- Runs routing/watchdog checks
+  |    \- Handles graceful shutdown
+  |
+  +- GeoIP service (compact binary DB + optional API lookups)
+  +- Split Tunnel Manager (ipset/iptables/policy-routing compiler)
+  \- GeoIP update scheduler (background thread)
 ```
 
 ## Security Notes

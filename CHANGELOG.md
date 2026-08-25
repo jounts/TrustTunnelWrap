@@ -6,6 +6,12 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- Add GeoIP subsystem with a compact binary country database (`v4.bin`/`v6.bin`), local parsers (GeoLite2 mmdb/CSV, IP2Location LITE CSV, per-country zone lists) and optional online API lookups (ip2c.org, ip2c.org-style generic JSON, ipapi.com) with TTL cache and rate limiting.
+- Ship three keyless db providers in the default configuration (P3TERX GeoLite.mmdb, wp-statistics mmdb.gz via jsDelivr, IP2Location LITE DB1 CSV); selecting a provider (`POST /api/geoip/provider`, single-select) immediately downloads and builds its database.
+- Automatically build the GeoIP database when split tunneling is enabled without an existing one; refuse to apply policies on a missing database instead of silently installing empty rulesets.
+- Add OS-level split tunneling driven by GeoIP countries: `tunnel_all_except` and `tunnel_only_listed` policies compiled into ipset/iptables-mark/policy-routing rules without touching NDM static routes; manual bypass/tunnel rules take precedence over country lists.
+- Add automatic database updates (ETag-based conditional downloads, gzip/zip transparent decompression, atomic replacement with sanity checks and rollback) plus a cron request-file hook for out-of-schedule refreshes.
+- Add WebUI endpoints `/api/geoip/status|providers|update`, `/api/splittunnel/policy`, `/api/splittunnel/test` and a "Split Tunneling" tab with policy editing, database status and route diagnostics.
 - Add Manual and DeepLink modes to the WebUI tunnel configuration section.
 - Import TrustTunnel `tt://?...` links into the manual configuration form without automatic saving.
 
@@ -23,10 +29,12 @@ All notable changes to this project are documented in this file.
 
 ### Tests
 
-- Add coverage for partial-config defaults, validation, TOML escaping, endpoint parsing, and UTF-8 output summaries.
+- Add coverage for partial-config defaults, validation, TOML escaping, endpoint parsing, UTF-8 output summaries, the compact GeoIP binary format (round-trip lookup, range merging, priority on overlap), CSV/zone parsers, policy compilation (fwmark/ipset plans, CIDR expansion, route decision matrix), API rate limiting and config validation of the new `geoip`/`split_tunnel` sections.
 
 ### Documentation
 
+- Document `geoip` and `split_tunnel` configuration sections, requirements (ipset/iptables on Entware), provider mirrors and killswitch interaction in CONFIGURATION.md/CONFIGURATION_RU.md.
+- Document new GeoIP and split tunneling API endpoints in API.md/API_RU.md.
 - Warn that the WebUI remains plain HTTP on `0.0.0.0` and session tokens can be intercepted.
 
 ## v0.1.3
