@@ -4,7 +4,7 @@
 use std::io::{Cursor, Read};
 use std::time::Duration;
 
-const MAX_DOWNLOAD_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_SECS: u64 = 300;
 
 pub struct Fetch {
@@ -20,7 +20,11 @@ pub fn fetch_if_modified(url: &str, etag: Option<&str>) -> Result<Fetch, String>
         .build();
     let mut req = agent.get(url);
     if let Some(tag) = etag {
-        req = req.set("If-None-Match", tag);
+        if is_http_date(tag) {
+            req = req.set("If-Modified-Since", tag);
+        } else {
+            req = req.set("If-None-Match", tag);
+        }
     }
     let resp = req.call().map_err(|e| format!("GET {}: {}", url, e))?;
 
@@ -62,7 +66,11 @@ pub fn decompress_sniff(bytes: Vec<u8>) -> Result<Box<dyn Read + Send>, String> 
         let cursor = Cursor::new(bytes);
         let mut archive =
             zip::ZipArchive::new(cursor).map_err(|e| format!("open zip archive: {}", e))?;
-        // Prefer a plausible data file by extension, otherwise the largest entry.
+        // Prefer a data file (.csv / .mmdb / .zone) by extension, otherwise the
+        // largest entry. Plain .txt is deliberately excluded: vendor archives
+        // (e.g. IP2Location LITE) ship license/readme .txt files that must not
+        // be mistaken for the dataset.
+        const PREFERRED_EXTS: [&str; 3] = ["csv", "mmdb", "zone"];
         let mut entries: Vec<(usize, String, u64)> = Vec::new();
         for i in 0..archive.len() {
             let file = archive
@@ -70,12 +78,12 @@ pub fn decompress_sniff(bytes: Vec<u8>) -> Result<Box<dyn Read + Send>, String> 
                 .map_err(|e| format!("zip entry {}: {}", i, e))?;
             entries.push((i, file.name().to_string(), file.size()));
         }
-        let idx = entries
-            .iter()
-            .find(|(_, name, _)| {
-                ["csv", "mmdb", "zone", "txt"]
+        let idx = (0..PREFERRED_EXTS.len())
+            .find_map(|rank| {
+                let ext = PREFERRED_EXTS[rank];
+                entries
                     .iter()
-                    .any(|ext| name.to_ascii_lowercase().ends_with(ext))
+                    .find(|(_, name, _)| name.to_ascii_lowercase().ends_with(&format!(".{ext}")))
             })
             .or_else(|| entries.iter().max_by_key(|(_, _, size)| *size))
             .map(|(i, _, _)| *i)
@@ -90,6 +98,28 @@ pub fn decompress_sniff(bytes: Vec<u8>) -> Result<Box<dyn Read + Send>, String> 
         return Ok(Box::new(Cursor::new(out)));
     }
     Ok(Box::new(Cursor::new(bytes)))
+}
+
+/// True when `tag` looks like an HTTP-date ("Tue, 15 Nov 1994 12:45:26 GMT"),
+/// i.e. a Last-Modified value rather than an opaque ETag.
+fn is_http_date(tag: &str) -> bool {
+    let weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    tag.len() >= 4
+        && weekdays
+            .iter()
+            .any(|d| tag.starts_with(d) && tag[3..].starts_with(','))
+}
+
+#[cfg(test)]
+fn build_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+    let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (name, data) in entries {
+        w.start_file(*name, zip::write::FileOptions::default())
+            .unwrap();
+        w.write_all(data).unwrap();
+    }
+    w.finish().unwrap().into_inner()
 }
 
 #[cfg(test)]
@@ -119,17 +149,36 @@ mod tests {
 
     #[test]
     fn zip_is_detected_and_decoded() {
-        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-        w.start_file(
-            "data/IP2LOCATION-LITE-DB1.CSV",
-            zip::write::FileOptions::default(),
-        )
-        .unwrap();
-        std::io::Write::write_all(&mut w, b"1,2,AU,AUSTRALIA").unwrap();
-        let zipped = w.finish().unwrap().into_inner();
+        let zipped = build_zip(&[
+            ("data/IP2LOCATION-LITE-DB1.CSV", b"1,2,AU,AUSTRALIA"),
+            ("LICENSE.TXT", b"license text"),
+        ]);
         let mut r = decompress_sniff(zipped).unwrap();
         let mut s = String::new();
         r.read_to_string(&mut s).unwrap();
         assert_eq!(s, "1,2,AU,AUSTRALIA");
+    }
+
+    #[test]
+    fn zip_license_txt_is_not_selected_over_data_file() {
+        // License file first, larger than the data payload: the extension
+        // preference must still win over both entry order and size.
+        let zipped = build_zip(&[
+            ("README.TXT", b"readme text that is long"),
+            ("LICENSE.TXT", b"license text that is even longer!"),
+            ("IP2LOCATION-LITE-DB1.CSV", b"0,16777215,-,-"),
+        ]);
+        let mut r = decompress_sniff(zipped).unwrap();
+        let mut s = String::new();
+        r.read_to_string(&mut s).unwrap();
+        assert_eq!(s, "0,16777215,-,-");
+    }
+
+    #[test]
+    fn is_http_date_detection() {
+        assert!(is_http_date("Tue, 15 Nov 1994 12:45:26 GMT"));
+        assert!(!is_http_date("\"33a64df551425fcc55e4d42a148795d9\""));
+        assert!(!is_http_date("weak-tag"));
+        assert!(!is_http_date(""));
     }
 }
