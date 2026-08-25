@@ -28,3 +28,8 @@ clap = { version = "4", features = ["derive"] }
 log = "0.4"
 env_logger = "0.11"
 nix = { version = "0.28", features = ["process", "signal", "fs", "net"] }
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+zip = { version = "0.6", default-features = false, features = ["deflate"] }
+maxminddb = { version = "0.24", default-features = false }
+ipnetwork = "0.20"
+csv = "1"

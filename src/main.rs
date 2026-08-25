@@ -1,8 +1,11 @@
 mod auth;
 mod config;
+mod geoip;
 mod logger;
 mod logs;
 mod routing;
+mod scheduler;
+mod split_tunnel;
 mod tunnel;
 mod webui;
 
@@ -73,8 +76,18 @@ fn main() {
     // Shared config
     let config = Arc::new(Mutex::new(cfg.clone()));
 
+    // Split tunneling manager (GeoIP-driven policy routing)
+    let split_mgr = split_tunnel::SplitTunnelManager::new(
+        cfg.split_tunnel.clone(),
+        cfg.geoip.clone(),
+        cfg.tunnel.has_ipv6,
+    );
+
     // Create tunnel manager
-    let tunnel = tunnel::TunnelManager::new(cfg.tunnel.clone(), &cfg.routing);
+    let tunnel = tunnel::TunnelManager::new(cfg.tunnel.clone(), &cfg.routing, split_mgr.clone());
+
+    // GeoIP auto-update scheduler
+    scheduler::spawn(config.clone(), split_mgr.clone());
 
     // Set up signal handlers
     let tunnel_for_signal = tunnel.clone();
@@ -104,7 +117,14 @@ fn main() {
     };
     log::info!("NDM API endpoint: {}:{}", ndm_host, cfg.webui.ndm_port);
 
-    let web = webui::WebUI::new(tunnel, config, args.config, ndm_host, cfg.webui.ndm_port);
+    let web = webui::WebUI::new(
+        tunnel,
+        config,
+        args.config,
+        ndm_host,
+        cfg.webui.ndm_port,
+        split_mgr,
+    );
     web.run(&cfg.webui.bind, cfg.webui.port);
 }
 

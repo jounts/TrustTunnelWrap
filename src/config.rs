@@ -14,6 +14,10 @@ pub struct WrapperConfig {
     pub logging: LogSettings,
     #[serde(default)]
     pub routing: RoutingSettings,
+    #[serde(default)]
+    pub geoip: GeoIpSettings,
+    #[serde(default)]
+    pub split_tunnel: SplitTunnelSettings,
 }
 
 /// Settings that map to TrustTunnelClient's TOML config.
@@ -135,6 +139,134 @@ impl Default for RoutingSettings {
     }
 }
 
+/// A downloadable GeoIP database source (GeoLite2 mmdb/CSV, IP2Location LITE, per-country zone lists).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoIpDbProvider {
+    pub id: String,
+    pub url: String,
+    /// One of: "mmdb", "geolite2-csv", "ip2location-csv", "zone"
+    pub format: String,
+    #[serde(default = "default_provider_priority")]
+    pub priority: u32,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+/// An online IP-to-country lookup API (ipapi.com, ip2c.org, ...).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GeoIpApiProvider {
+    pub id: String,
+    /// Provider kind: "ipapi" | "ip2c" | "generic-json"
+    pub kind: String,
+    pub url: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default = "default_provider_priority")]
+    pub priority: u32,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    #[serde(default = "default_rate_limit_per_min")]
+    pub rate_limit_per_min: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoIpAutoUpdate {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_update_interval_hours")]
+    pub interval_hours: u64,
+    #[serde(default = "default_update_jitter_minutes")]
+    pub jitter_minutes: u64,
+    #[serde(default = "default_true")]
+    pub on_startup_if_stale: bool,
+    #[serde(default = "default_max_age_hours_hard")]
+    pub max_age_hours_hard: u64,
+}
+
+impl Default for GeoIpAutoUpdate {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_hours: default_update_interval_hours(),
+            jitter_minutes: default_update_jitter_minutes(),
+            on_startup_if_stale: true,
+            max_age_hours_hard: default_max_age_hours_hard(),
+        }
+    }
+}
+
+/// GeoIP subsystem settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GeoIpSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    /// "local" | "api" | "hybrid"
+    #[serde(default = "default_geoip_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub db_providers: Vec<GeoIpDbProvider>,
+    #[serde(default)]
+    pub api_providers: Vec<GeoIpApiProvider>,
+    #[serde(default = "default_true")]
+    pub trim_to_selected_countries: bool,
+    #[serde(default = "default_db_path")]
+    pub db_path: String,
+    #[serde(default = "default_cache_ttl_hours")]
+    pub cache_ttl_hours: u64,
+    #[serde(default)]
+    pub auto_update: GeoIpAutoUpdate,
+}
+
+impl Default for GeoIpSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: default_geoip_mode(),
+            db_providers: Vec::new(),
+            api_providers: Vec::new(),
+            trim_to_selected_countries: true,
+            db_path: default_db_path(),
+            cache_ttl_hours: default_cache_ttl_hours(),
+            auto_update: GeoIpAutoUpdate::default(),
+        }
+    }
+}
+
+/// Split tunneling policy driven by GeoIP country data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SplitTunnelSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    /// "tunnel_all_except" | "tunnel_only_listed"
+    #[serde(default = "default_split_policy")]
+    pub policy: String,
+    #[serde(default)]
+    pub countries_bypass: Vec<String>,
+    #[serde(default)]
+    pub countries_tunnel: Vec<String>,
+    #[serde(default)]
+    pub manual_bypass: Vec<String>,
+    #[serde(default)]
+    pub manual_tunnel: Vec<String>,
+    /// "local" | "api" | "hybrid"
+    #[serde(default = "default_geoip_mode")]
+    pub detection_mode: String,
+}
+
+impl Default for SplitTunnelSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            policy: default_split_policy(),
+            countries_bypass: Vec::new(),
+            countries_tunnel: Vec::new(),
+            manual_bypass: Vec::new(),
+            manual_tunnel: Vec::new(),
+            detection_mode: default_geoip_mode(),
+        }
+    }
+}
+
 fn default_watchdog_interval() -> u64 {
     30
 }
@@ -205,6 +337,33 @@ fn default_rotate_size_bytes() -> u64 {
 }
 fn default_rotate_keep() -> usize {
     1
+}
+fn default_provider_priority() -> u32 {
+    1
+}
+fn default_rate_limit_per_min() -> u32 {
+    30
+}
+fn default_update_interval_hours() -> u64 {
+    168
+}
+fn default_update_jitter_minutes() -> u64 {
+    30
+}
+fn default_max_age_hours_hard() -> u64 {
+    720
+}
+fn default_geoip_mode() -> String {
+    "local".into()
+}
+fn default_db_path() -> String {
+    "/opt/etc/trusttunnel/geoip/".into()
+}
+fn default_cache_ttl_hours() -> u64 {
+    24
+}
+fn default_split_policy() -> String {
+    "tunnel_all_except".into()
 }
 
 fn parse_size_with_units(value: &str) -> Option<u64> {
@@ -364,7 +523,197 @@ impl WrapperConfig {
                 "watchdog_interval, watchdog_failures and watchdog_check_timeout must be greater than zero".into(),
             );
         }
+        self.geoip.validate()?;
+        self.split_tunnel.validate()?;
         Ok(())
+    }
+}
+
+fn is_valid_country_code(code: &str) -> bool {
+    code.len() == 2 && code.bytes().all(|b| b.is_ascii_uppercase())
+}
+
+/// Domain name, IP address or CIDR — the target syntax accepted by manual rules.
+pub fn is_valid_target(value: &str) -> bool {
+    let v = value.trim();
+    if v.is_empty() || v.len() > 253 || v.contains(char::is_whitespace) {
+        return false;
+    }
+    if let Ok(_ip) = v.parse::<std::net::IpAddr>() {
+        return true;
+    }
+    if let Some((addr, prefix)) = v.rsplit_once('/') {
+        if addr.parse::<std::net::IpAddr>().is_ok() {
+            return prefix.parse::<u8>().is_ok();
+        }
+        return false;
+    }
+    // Loose domain check: labels of [A-Za-z0-9_-], dots as separators.
+    v.split('.').all(|label| {
+        !label.is_empty()
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    })
+}
+
+/// Adjusts the client-side vpn_mode/routes for OS-level split tunneling:
+/// - tunnel_all_except: client stays in `general` (everything through tun);
+///   bypassed countries are routed around at OS level via fwmark.
+/// - tunnel_only_listed: client is switched to `selective` with no included
+///   routes; only fwmark-tagged country/manual traffic enters the tun device.
+pub fn effective_tunnel_settings(
+    tunnel: &TunnelSettings,
+    st: &SplitTunnelSettings,
+) -> TunnelSettings {
+    let mut t = tunnel.clone();
+    if st.enabled {
+        match st.policy.as_str() {
+            "tunnel_only_listed" => {
+                t.vpn_mode = "selective".into();
+                t.included_routes = Vec::new();
+            }
+            _ => {
+                t.vpn_mode = "general".into();
+            }
+        }
+    }
+    t
+}
+
+impl GeoIpSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if !matches!(self.mode.as_str(), "local" | "api" | "hybrid") {
+            return Err("geoip.mode must be local, api or hybrid".into());
+        }
+        if self.db_path.trim().is_empty() {
+            return Err("geoip.db_path must not be empty".into());
+        }
+        if self.cache_ttl_hours == 0 {
+            return Err("geoip.cache_ttl_hours must be greater than zero".into());
+        }
+        if self.auto_update.enabled && self.auto_update.interval_hours == 0 {
+            return Err("geoip.auto_update.interval_hours must be greater than zero".into());
+        }
+        let mut ids = std::collections::HashSet::new();
+        for p in &self.db_providers {
+            if p.id.trim().is_empty() {
+                return Err("geoip.db_providers[].id must not be empty".into());
+            }
+            if !ids.insert(format!("db:{}", p.id)) {
+                return Err(format!("duplicate geoip db provider id '{}'", p.id));
+            }
+            if !(p.url.starts_with("http://") || p.url.starts_with("https://")) {
+                return Err(format!(
+                    "geoip.db_providers['{}'].url must be http(s)",
+                    p.id
+                ));
+            }
+            match p.format.as_str() {
+                "mmdb" | "geolite2-csv" | "ip2location-csv" | "zone" => {}
+                other => {
+                    return Err(format!(
+                        "geoip.db_providers['{}'].format '{}' is not supported (use mmdb, geolite2-csv, ip2location-csv or zone)",
+                        p.id, other
+                    ))
+                }
+            }
+        }
+        for p in &self.api_providers {
+            if p.id.trim().is_empty() {
+                return Err("geoip.api_providers[].id must not be empty".into());
+            }
+            if !ids.insert(format!("api:{}", p.id)) {
+                return Err(format!("duplicate geoip api provider id '{}'", p.id));
+            }
+            if !(p.url.starts_with("http://") || p.url.starts_with("https://")) {
+                return Err(format!(
+                    "geoip.api_providers['{}'].url must be http(s)",
+                    p.id
+                ));
+            }
+            if !matches!(p.kind.as_str(), "ipapi" | "ip2c" | "generic-json") {
+                return Err(format!(
+                    "geoip.api_providers['{}'].kind must be ipapi, ip2c or generic-json",
+                    p.id
+                ));
+            }
+            if p.rate_limit_per_min == 0 {
+                return Err(
+                    "geoip.api_providers[].rate_limit_per_min must be greater than zero".into(),
+                );
+            }
+        }
+        if self.enabled
+            && matches!(self.mode.as_str(), "local" | "hybrid")
+            && !self.db_providers.iter().any(|p| p.enabled)
+        {
+            return Err(format!(
+                "geoip.mode '{}' requires at least one enabled db provider",
+                self.mode
+            ));
+        }
+        if self.enabled
+            && matches!(self.mode.as_str(), "api" | "hybrid")
+            && !self.api_providers.iter().any(|p| p.enabled)
+        {
+            return Err(format!(
+                "geoip.mode '{}' requires at least one enabled api provider",
+                self.mode
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl SplitTunnelSettings {
+    pub fn validate(&self) -> Result<(), String> {
+        if !matches!(
+            self.policy.as_str(),
+            "tunnel_all_except" | "tunnel_only_listed"
+        ) {
+            return Err(
+                "split_tunnel.policy must be tunnel_all_except or tunnel_only_listed".into(),
+            );
+        }
+        if !matches!(self.detection_mode.as_str(), "local" | "api" | "hybrid") {
+            return Err("split_tunnel.detection_mode must be local, api or hybrid".into());
+        }
+        for cc in self.countries_bypass.iter().chain(&self.countries_tunnel) {
+            if !is_valid_country_code(cc) {
+                return Err(format!(
+                    "split_tunnel country code '{}' is invalid (expected ISO 3166-1 alpha-2, e.g. 'RU')",
+                    cc
+                ));
+            }
+        }
+        for target in self.manual_bypass.iter().chain(&self.manual_tunnel) {
+            if !is_valid_target(target) {
+                return Err(format!("split_tunnel manual rule '{}' is invalid", target));
+            }
+        }
+        if self.enabled {
+            match self.policy.as_str() {
+                "tunnel_all_except" if self.countries_bypass.is_empty() => return Err(
+                    "split_tunnel policy 'tunnel_all_except' requires non-empty countries_bypass"
+                        .into(),
+                ),
+                "tunnel_only_listed" if self.countries_tunnel.is_empty() => return Err(
+                    "split_tunnel policy 'tunnel_only_listed' requires non-empty countries_tunnel"
+                        .into(),
+                ),
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// Countries that define the GeoIP-driven set according to the active policy.
+    pub fn selected_countries(&self) -> Vec<String> {
+        match self.policy.as_str() {
+            "tunnel_only_listed" => self.countries_tunnel.clone(),
+            _ => self.countries_bypass.clone(),
+        }
     }
 }
 
@@ -653,5 +1002,97 @@ mod tests {
         };
         let toml = generate_client_toml(&settings);
         assert!(toml.contains("username = \"user\\u0001name\""));
+    }
+
+    #[test]
+    fn geoip_defaults_are_disabled_and_valid() {
+        let geoip = GeoIpSettings::default();
+        assert!(!geoip.enabled);
+        assert!(geoip.validate().is_ok());
+    }
+
+    #[test]
+    fn geoip_local_mode_requires_db_provider_when_enabled() {
+        let mut geoip = GeoIpSettings {
+            enabled: true,
+            mode: "local".into(),
+            ..Default::default()
+        };
+        assert!(geoip.validate().is_err());
+        geoip.db_providers.push(GeoIpDbProvider {
+            id: "geolite".into(),
+            url: "https://example.com/db.mmdb".into(),
+            format: "mmdb".into(),
+            priority: 1,
+            enabled: true,
+        });
+        assert!(geoip.validate().is_ok());
+    }
+
+    #[test]
+    fn geoip_rejects_bad_format_and_mode() {
+        let geoip = GeoIpSettings {
+            mode: "nope".into(),
+            ..Default::default()
+        };
+        assert!(geoip.validate().is_err());
+
+        let geoip = GeoIpSettings {
+            db_providers: vec![GeoIpDbProvider {
+                id: "x".into(),
+                url: "https://example.com/x.csv".into(),
+                format: "csv-excel".into(),
+                priority: 1,
+                enabled: true,
+            }],
+            ..Default::default()
+        };
+        assert!(geoip.validate().is_err());
+    }
+
+    #[test]
+    fn split_tunnel_validation_rules() {
+        let st = SplitTunnelSettings::default();
+        assert!(st.validate().is_ok());
+
+        let mut st = SplitTunnelSettings {
+            enabled: true,
+            policy: "tunnel_all_except".into(),
+            countries_bypass: vec!["RU".into()],
+            ..Default::default()
+        };
+        assert!(st.validate().is_ok());
+
+        st.countries_bypass.clear();
+        assert!(st.validate().is_err()); // no countries for policy
+
+        st.policy = "tunnel_only_listed".into();
+        st.countries_tunnel = vec!["ru".into()];
+        assert!(st.validate().is_err()); // lowercase ISO code
+
+        st.countries_tunnel = vec!["RU".into()];
+        st.manual_bypass = vec!["not a target!".into()];
+        assert!(st.validate().is_err());
+    }
+
+    #[test]
+    fn valid_target_checks() {
+        assert!(is_valid_target("192.168.1.1"));
+        assert!(is_valid_target("10.0.0.0/8"));
+        assert!(is_valid_target("2001:db8::/32"));
+        assert!(is_valid_target("example.local"));
+        assert!(is_valid_target("some-blocked_service.com"));
+        assert!(!is_valid_target(""));
+        assert!(!is_valid_target("has space.com"));
+        assert!(!is_valid_target("10.0.0.0/xx"));
+        assert!(!is_valid_target("bad!host"));
+    }
+
+    #[test]
+    fn partial_config_gets_geoip_defaults() {
+        let cfg: WrapperConfig = serde_json::from_str(r#"{"tunnel":{"hostname":"h"}}"#).unwrap();
+        assert_eq!(cfg.geoip.mode, "local");
+        assert_eq!(cfg.geoip.cache_ttl_hours, 24);
+        assert_eq!(cfg.split_tunnel.policy, "tunnel_all_except");
     }
 }

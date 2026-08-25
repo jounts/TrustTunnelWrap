@@ -1,6 +1,7 @@
 use crate::config::{generate_client_toml, TunnelSettings};
 use crate::logs;
 use crate::routing;
+use crate::split_tunnel;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -39,10 +40,15 @@ pub struct TunnelManager {
     last_wan_interface: Arc<Mutex<String>>,
     lifecycle: Mutex<()>,
     routing_setup_handle: Mutex<Option<std::thread::JoinHandle<()>>>,
+    split: Arc<split_tunnel::SplitTunnelManager>,
 }
 
 impl TunnelManager {
-    pub fn new(settings: TunnelSettings, routing: &crate::config::RoutingSettings) -> Arc<Self> {
+    pub fn new(
+        settings: TunnelSettings,
+        routing_cfg: &crate::config::RoutingSettings,
+        split: Arc<split_tunnel::SplitTunnelManager>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             settings: Mutex::new(settings),
             status: Mutex::new(TunnelStatus::default()),
@@ -50,19 +56,20 @@ impl TunnelManager {
             running: AtomicBool::new(false),
             should_stop: AtomicBool::new(false),
             connect_time: Mutex::new(None),
-            routing_enabled: routing.enabled,
+            routing_enabled: routing_cfg.enabled,
             routing_active: Arc::new(AtomicBool::new(false)),
             routing_setup_in_progress: Arc::new(AtomicBool::new(false)),
-            watchdog_enabled: routing.watchdog_enabled,
-            watchdog_interval: Duration::from_secs(routing.watchdog_interval),
-            watchdog_max_failures: routing.watchdog_failures,
-            watchdog_check_url: routing.watchdog_check_url.clone(),
-            watchdog_check_timeout: Duration::from_secs(routing.watchdog_check_timeout),
+            watchdog_enabled: routing_cfg.watchdog_enabled,
+            watchdog_interval: Duration::from_secs(routing_cfg.watchdog_interval),
+            watchdog_max_failures: routing_cfg.watchdog_failures,
+            watchdog_check_url: routing_cfg.watchdog_check_url.clone(),
+            watchdog_check_timeout: Duration::from_secs(routing_cfg.watchdog_check_timeout),
             watchdog_failures: AtomicU32::new(0),
             last_watchdog_check: Mutex::new(Instant::now()),
             last_wan_interface: Arc::new(Mutex::new(String::new())),
             lifecycle: Mutex::new(()),
             routing_setup_handle: Mutex::new(None),
+            split,
         })
     }
 
@@ -83,7 +90,8 @@ impl TunnelManager {
     /// Write the TOML config to disk so trusttunnel_client can read it.
     fn write_toml_config(&self) -> Result<(), String> {
         let settings = self.settings.lock().unwrap().clone();
-        let toml_content = generate_client_toml(&settings);
+        let effective = split_tunnel::effective_client_settings(&settings, &self.split);
+        let toml_content = generate_client_toml(&effective);
 
         if let Some(parent) = std::path::Path::new(CLIENT_TOML).parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir failed: {}", e))?;
@@ -178,6 +186,7 @@ impl TunnelManager {
         let flag = self.routing_active.clone();
         let wan_ref = self.last_wan_interface.clone();
         let in_progress = self.routing_setup_in_progress.clone();
+        let split_ref = self.split.clone();
 
         let spawn_result = std::thread::Builder::new()
             .name("routing-setup".into())
@@ -185,6 +194,10 @@ impl TunnelManager {
                 Ok(wan) => {
                     flag.store(true, Ordering::SeqCst);
                     *wan_ref.lock().unwrap() = wan;
+                    // OS-level split tunneling rides on top of the base routing.
+                    if let Err(e) = split_ref.apply_now() {
+                        log::warn!("[split] apply after connect failed: {}", e);
+                    }
                 }
                 Err(e) => log::error!("[routing] setup failed: {}", e),
             });
@@ -208,6 +221,8 @@ impl TunnelManager {
             let addresses = self.settings.lock().unwrap().addresses.clone();
             routing::teardown_routing(&addresses);
         }
+        // Always clean split tunnel artifacts, even when routing is disabled.
+        self.split.teardown();
     }
 
     pub fn stop(&self) {
@@ -303,6 +318,7 @@ impl TunnelManager {
         let addresses = self.settings.lock().unwrap().addresses.clone();
         routing::reroute_server_via_wan(&addresses, new_wan);
         *self.last_wan_interface.lock().unwrap() = new_wan.to_string();
+        self.split.refresh_wan(new_wan);
         self.watchdog_failures.store(0, Ordering::SeqCst);
     }
 
