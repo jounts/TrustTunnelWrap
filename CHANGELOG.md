@@ -10,7 +10,7 @@ All notable changes to this project are documented in this file.
 - Ship three keyless db providers in the default configuration (P3TERX GeoLite.mmdb, wp-statistics mmdb.gz via jsDelivr, IP2Location LITE DB1 CSV); selecting a provider (`POST /api/geoip/provider`, single-select) immediately downloads and builds its database.
 - Automatically build the GeoIP database when split tunneling is enabled without an existing one; refuse to apply policies on a missing database instead of silently installing empty rulesets.
 - Add OS-level split tunneling driven by GeoIP countries: `tunnel_all_except` and `tunnel_only_listed` policies compiled into ipset/iptables-mark/policy-routing rules without touching NDM static routes; manual bypass/tunnel rules take precedence over country lists.
-- Add automatic database updates (ETag-based conditional downloads, gzip/zip transparent decompression, atomic replacement with sanity checks and rollback) plus a cron request-file hook for out-of-schedule refreshes.
+- Add automatic database updates (ETag/Last-Modified conditional downloads, gzip/zip transparent decompression, atomic replacement with sanity checks and rollback) plus a cron request-file hook for out-of-schedule refreshes.
 - Add WebUI endpoints `/api/geoip/status|providers|update`, `/api/splittunnel/policy`, `/api/splittunnel/test` and a "Split Tunneling" tab with policy editing, database status and route diagnostics.
 - Add Manual and DeepLink modes to the WebUI tunnel configuration section.
 - Import TrustTunnel `tt://?...` links into the manual configuration form without automatic saving.
@@ -26,6 +26,10 @@ All notable changes to this project are documented in this file.
 - Validate MTU, reconnect, watchdog, protocol, VPN mode, port, and log buffer settings.
 - Prevent UTF-8 boundary panics and escape TOML control characters correctly.
 - Write wrapper and client configuration files atomically with restrictive permissions.
+- Prefer `.csv`/`.mmdb`/`.zone` entries over license/readme files when extracting GeoIP data from zip archives.
+- Apply an exponential backoff (1 min → 2 h cap) to scheduled GeoIP updates after consecutive download failures; manual/cron requests are never delayed.
+- Send `If-Modified-Since` for servers that only provide `Last-Modified`, so conditional downloads work without ETag.
+- Cap downloaded GeoIP source size at 32 MB to protect low-RAM devices from oversized responses.
 
 ### Tests
 
@@ -33,7 +37,7 @@ All notable changes to this project are documented in this file.
 
 ### Documentation
 
-- Document `geoip` and `split_tunnel` configuration sections, requirements (ipset/iptables on Entware), provider mirrors and killswitch interaction in CONFIGURATION.md/CONFIGURATION_RU.md.
+- Document `geoip` and `split_tunnel` configuration sections, requirements (ipset/iptables on Entware, including the explicit `opkg install ipset iptables` step for firmware without out-of-the-box ipset), provider mirrors and killswitch interaction in CONFIGURATION.md/CONFIGURATION_RU.md.
 - Document new GeoIP and split tunneling API endpoints in API.md/API_RU.md.
 - Warn that the WebUI remains plain HTTP on `0.0.0.0` and session tokens can be intercepted.
 

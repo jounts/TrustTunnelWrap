@@ -214,7 +214,10 @@ are resolved to IPs at apply time.
 
 Requirements on Entware: `ipset` binary + kernel modules (`ip_set`,
 `ip_set_hash_net`, `xt_set`), `iptables` mangle table. The wrapper verifies
-these before applying a policy and reports missing pieces in the WebUI.
+these before applying a policy (`check_capabilities()`) and reports missing
+pieces in the WebUI; while any of them is missing, policies are not applied.
+On some Keenetic firmware versions `ipset`/kernel modules are not available
+out of the box — install them from Entware first: `opkg install ipset iptables`.
 Caveat: combine with `killswitch_enabled` carefully — killswitch blocks all
 traffic outside the tun device, including split-tunnel "direct" flows.
 
